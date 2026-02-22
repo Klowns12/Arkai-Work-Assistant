@@ -1,16 +1,19 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 @Injectable()
 export class AiService {
   private genAI: GoogleGenerativeAI;
+  private apiKey: string;
 
-  constructor() {
-    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+  constructor(private configService: ConfigService) {
+    this.apiKey = this.configService.get<string>('GEMINI_API_KEY') || '';
+    this.genAI = new GoogleGenerativeAI(this.apiKey);
   }
 
   async summarizeText(text: string): Promise<string> {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!this.apiKey) {
       return '⚠️ ยังไม่ได้ตั้งค่า AI / AI not configured (GEMINI_API_KEY missing)';
     }
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
@@ -25,7 +28,7 @@ export class AiService {
   }
 
   async extractTask(text: string): Promise<{ title: string; description?: string; dueDate?: Date }> {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!this.apiKey) {
       return { title: text.substring(0, 50) };
     }
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
@@ -55,7 +58,7 @@ export class AiService {
   }
 
   async chat(text: string): Promise<string> {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!this.apiKey) {
       return `🤖 ยังไม่ได้ตั้งค่า AI / AI not configured\nกรุณาตั้งค่า GEMINI_API_KEY`;
     }
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
