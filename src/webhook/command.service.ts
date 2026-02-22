@@ -5,6 +5,7 @@ import { MemoryService } from '../memory/memory.service';
 import { ReminderService } from '../reminder/reminder.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 
 type CommandHandler = (
   argsText: string,
@@ -24,6 +25,7 @@ export class CommandService {
     private readonly reminderService: ReminderService,
     private readonly aiService: AiService,
     private readonly prisma: PrismaService,
+    private readonly subscriptionService: SubscriptionService,
   ) {
     this.commandMap = new Map<string, CommandHandler>();
     this.registerCommands();
@@ -44,19 +46,34 @@ export class CommandService {
     // ─── 2. สรุปแชท / Summary ────────────────────
     this.registerAliases(
       ['summary', 'สรุป'],
-      async (_args, orgId) => await this.summarizeToday(orgId),
+      async (_args, orgId, context) => {
+        const isGroup = context?.sourceType === 'group';
+        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'summary_today');
+        if (!check.allowed) return check.message || '⚭ ฟีเจอร์สำหรับแผน Basic ขึ้นไป';
+        return await this.summarizeToday(orgId);
+      },
     );
     this.registerAliases(
       ['yesterday', 'เมื่อวาน'],
-      async (_args, orgId) => await this.summarizeYesterday(orgId),
+      async (_args, orgId, context) => {
+        const isGroup = context?.sourceType === 'group';
+        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'summary_yesterday');
+        if (!check.allowed) return check.message || '⚭ ฟีเจอร์สำหรับแผน Pro ขึ้นไป';
+        return await this.summarizeYesterday(orgId);
+      },
     );
 
     // ─── 3. งาน / Tasks ──────────────────────────
     this.registerAliases(
       ['task', 'งาน'],
-      async (args, orgId) => {
+      async (args, orgId, context) => {
         if (!args) return '📋 วิธีใช้ / Usage:\n/task ส่งรายงานพรุ่งนี้\n/task Submit report by Friday';
-        return await this.taskService.createTask(args, orgId);
+        const isGroup = context?.sourceType === 'group';
+        const check = await this.subscriptionService.checkTaskCreation(orgId, isGroup);
+        if (!check.allowed) return check.message || '📋 สร้างงานครบโควต้า';
+        const result = await this.taskService.createTask(args, orgId);
+        await this.subscriptionService.trackTaskCreation(orgId, isGroup);
+        return result;
       },
     );
     this.registerAliases(
@@ -69,7 +86,10 @@ export class CommandService {
     );
     this.registerAliases(
       ['assign', 'มอบหมาย'],
-      async (args, orgId) => {
+      async (args, orgId, context) => {
+        const isGroup = context?.sourceType === 'group';
+        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'assign_task');
+        if (!check.allowed) return check.message || '📋 มอบหมายงาน สำหรับแผน Basic ขึ้นไป';
         const parts = args.split(' ');
         if (parts.length < 2) return '📋 วิธีใช้ / Usage:\n/assign @ชื่อ งานที่ต้องทำ\n/assign @john finish design';
         const user = parts[0].replace('@', '');
@@ -98,6 +118,13 @@ export class CommandService {
     this.registerAliases(
       ['help', 'วิธีใช้', 'menu'],
       () => this.help(),
+    );
+    this.registerAliases(
+      ['plan', 'แผน', 'สมัคร'],
+      async (_args, orgId, context) => {
+        const isGroup = context?.sourceType === 'group';
+        return await this.subscriptionService.getPlanStatus(orgId, isGroup);
+      },
     );
   }
 
@@ -322,6 +349,9 @@ export class CommandService {
 
 ⏰ เตือน
 • /remind [เรื่อง] — เตือนพรุ่งนี้
+
+📊 แผน
+• /plan — ดูแผนปัจจุบัน & อัพเกรด
 
 💬 พิมพ์อะไรก็ได้ (ไม่มี /) AI จะคุยด้วย`;
   }

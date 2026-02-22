@@ -6,14 +6,41 @@ datasource db {
   provider = "postgresql"
 }
 
+model Organization {
+  id            String    @id @default(uuid())
+  lineGroupId   String?   @unique
+  lineUserId    String?   @unique
+  name          String?
+  plan          String    @default("free") // free, basic, pro, business
+  planExpiresAt DateTime?
+  aiChatsToday  Int       @default(0)
+  aiChatsResetAt DateTime @default(now())
+  tasksThisMonth Int      @default(0)
+  tasksResetAt   DateTime @default(now())
+  storageUsedBytes BigInt @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Payment {
+  id            String    @id @default(uuid())
+  orgId         String
+  amount        Int       // in satang (baht x 100)
+  plan          String    // basic, pro, business
+  period        String    // monthly, yearly
+  status        String    @default("pending") // pending, completed, failed
+  paymentRef    String?
+  createdAt     DateTime  @default(now())
+}
+
 model Task {
   id          String    @id @default(uuid())
   title       String
   description String?
   assignee    String?
   dueDate     DateTime?
-  status      String    @default("pending") // pending, completed
-  orgId       String    // To differentiate users/groups
+  status      String    @default("pending")
+  orgId       String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 }
@@ -31,7 +58,7 @@ model Reminder {
 model Memory {
   id          String    @id @default(uuid())
   text        String
-  type        String    // e.g., 'agreement', 'responsibility', 'general'
+  type        String
   orgId       String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

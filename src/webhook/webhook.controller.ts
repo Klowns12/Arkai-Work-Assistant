@@ -6,6 +6,7 @@ import axios from 'axios';
 import { CommandService } from './command.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 
 @Controller('webhook')
 export class WebhookController {
@@ -17,6 +18,7 @@ export class WebhookController {
     private readonly aiService: AiService,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly subscriptionService: SubscriptionService,
   ) {
     this.channelSecret = this.configService.get<string>('LINE_CHANNEL_SECRET') || '';
     this.accessToken = this.configService.get<string>('LINE_CHANNEL_ACCESS_TOKEN') || '';
@@ -147,7 +149,15 @@ export class WebhookController {
       if (userText.startsWith('/')) {
         responseText = await this.commandService.handle(userText, context);
       } else {
-        responseText = await this.aiService.chat(userText);
+        // Check AI quota before calling
+        const isGroup = context.sourceType === 'group';
+        const quotaCheck = await this.subscriptionService.checkAiChat(orgId, isGroup);
+        if (!quotaCheck.allowed) {
+          responseText = quotaCheck.message || '⚡ AI ครบโควต้าวันนี้แล้ว';
+        } else {
+          responseText = await this.aiService.chat(userText);
+          await this.subscriptionService.trackAiChat(orgId, isGroup);
+        }
       }
     } catch (error) {
       console.error('Command/AI error:', error);
