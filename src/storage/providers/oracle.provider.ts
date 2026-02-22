@@ -28,4 +28,8 @@ export class OracleStorageProvider implements StorageProvider {
   getUrl(key: string): string {
     throw new Error('Not implemented');
   }
+
+  async getPresignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
+    throw new Error('Not implemented');
+  }
 }

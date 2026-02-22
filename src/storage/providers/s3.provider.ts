@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { StorageProvider } from '../storage.interface';
 import type { StorageConfig } from '../storage.interface';
@@ -39,11 +40,10 @@ export class S3StorageProvider implements StorageProvider {
       Key: key,
     });
     const response = await this.client.send(command);
-    const stream = response.Body as ReadableStream;
-    // Convert stream to buffer
-    const chunks: Buffer[] = [];
-    // Note: This is simplified - in production, use stream-to-buffer
-    return Buffer.from([]);
+    const stream = response.Body;
+    if (!stream) throw new Error('Empty response body');
+    const bytes = await stream.transformToByteArray();
+    return Buffer.from(bytes);
   }
 
   async delete(key: string): Promise<void> {
@@ -56,5 +56,13 @@ export class S3StorageProvider implements StorageProvider {
 
   getUrl(key: string): string {
     return `${this.publicUrl}/${this.bucket}/${key}`;
+  }
+
+  async getPresignedUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+    });
+    return await getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
 }

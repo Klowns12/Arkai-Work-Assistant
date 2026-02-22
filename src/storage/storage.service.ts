@@ -49,6 +49,10 @@ export class StorageService {
     return this.provider.getUrl(key);
   }
 
+  async getPresignedUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {
+    return this.provider.getPresignedUrl(key, expiresInSeconds);
+  }
+
   // Multi-tenant key generation: orgId/filename
   generateKey(organizationId: string, filename: string): string {
     const timestamp = Date.now();

@@ -195,26 +195,34 @@ export class CommandService {
     const files = await this.prisma.file.findMany({
       where: { orgId, filename: { contains: query } },
       orderBy: { createdAt: 'desc' },
-      take: 10
+      take: 5
     });
 
     if (files.length === 0) return `🔍 ไม่พบไฟล์ "${query}" / No files found for "${query}"`;
 
-    return `🔍 ผลค้นหา "${query}" / Search results (${files.length}):\n` +
-      files.map((f, i) => `${i + 1}. 📄 ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${f.storageUrl}`).join('\n');
+    const results: string[] = [];
+    for (const f of files) {
+      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+      results.push(`📄 ${f.filename}\n📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n🔗 ${tempUrl}`);
+    }
+    return `🔍 ผลค้นหา "${query}" / Search results (${files.length}):\n\n` + results.join('\n\n');
   }
 
   private async getRecentFiles(orgId: string): Promise<string> {
     const files = await this.prisma.file.findMany({
       where: { orgId },
       orderBy: { createdAt: 'desc' },
-      take: 10
+      take: 5
     });
 
     if (files.length === 0) return '📂 ยังไม่มีไฟล์ / No files saved yet';
 
-    return `📂 ไฟล์ล่าสุด / Recent files (${files.length}):\n` +
-      files.map((f, i) => `${i + 1}. 📄 ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${f.storageUrl}`).join('\n');
+    const results: string[] = [];
+    for (const f of files) {
+      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+      results.push(`📄 ${f.filename}\n📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n🔗 ${tempUrl}`);
+    }
+    return `📂 ไฟล์ล่าสุด / Recent files (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชั่วโมง / Links expire in 1 hour\n\n` + results.join('\n\n');
   }
 
   // --- Summarize ---
