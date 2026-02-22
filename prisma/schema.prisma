@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Task {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  assignee    String?
+  dueDate     DateTime?
+  status      String    @default("pending") // pending, completed
+  orgId       String    // To differentiate users/groups
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Reminder {
+  id          String    @id @default(uuid())
+  time        DateTime
+  topic       String
+  orgId       String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Memory {
+  id          String    @id @default(uuid())
+  text        String
+  type        String    // e.g., 'agreement', 'responsibility', 'general'
+  orgId       String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  text        String
+  sender      String
+  orgId       String
+  createdAt   DateTime  @default(now())
+}

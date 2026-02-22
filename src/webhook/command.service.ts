@@ -1,14 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { StorageService, StorageQuotaService } from '../storage';
+import { TaskService } from '../task/task.service';
+import { MemoryService } from '../memory/memory.service';
+import { ReminderService } from '../reminder/reminder.service';
+import { AiService } from '../ai/ai.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class CommandService {
   constructor(
     private readonly storageService: StorageService,
     private readonly storageQuotaService: StorageQuotaService,
-  ) {}
+    private readonly taskService: TaskService,
+    private readonly memoryService: MemoryService,
+    private readonly reminderService: ReminderService,
+    private readonly aiService: AiService,
+    private readonly prisma: PrismaService,
+  ) { }
 
-  handle(text: string, context?: { sourceType: 'user' | 'group'; userId?: string; groupId?: string }): string {
+  async handle(text: string, context?: { sourceType: 'user' | 'group'; userId?: string; groupId?: string }): Promise<string> {
     const normalizedText = text.trim();
     const orgId = context?.groupId || context?.userId || 'personal';
 
@@ -34,55 +44,55 @@ export class CommandService {
 
     // หมวดที่ 2: สรุปการคุย
     if (command === 'สรุปวันนี้' || command === 'sum' || command === 'today') {
-      return this.summarizeToday();
+      return await this.summarizeToday(orgId);
     }
     if (command === 'สรุปเมื่อวาน') {
-      return this.summarizeYesterday();
+      return await this.summarizeYesterday(orgId);
     }
     if (command === 'สรุปเรื่อง') {
-      return this.summarizeTopic(argsText);
+      return await this.summarizeTopic(argsText, orgId);
     }
     if (command === 'สรุปงานของ') {
-      return this.summarizeUserWork(argsText);
+      return await this.summarizeUserWork(argsText, orgId);
     }
 
     // หมวดที่ 3: งาน / Task
     if (command === 'สร้างงาน') {
-      return this.createTask('');
+      return await this.createTask('', orgId);
     }
     if (command === 'งาน:') {
-      return this.createTask(argsText);
+      return await this.createTask(argsText, orgId);
     }
     if (command.startsWith('งาน:')) {
-      return this.createTask(command.substring(4).trim() + ' ' + argsText);
+      return await this.createTask(command.substring(4).trim() + ' ' + argsText, orgId);
     }
     if (command === 'มอบหมาย') {
-      return this.assignTask(argsText);
+      return await this.assignTask(argsText, orgId);
     }
     if (command === 'งานของฉัน' || command === 'tasks') {
-      return this.myTasks();
+      return await this.taskService.getMyTasks(context?.userId || 'unknown', orgId);
     }
     if (command === 'งานทั้งหมด') {
-      return this.allTasks();
+      return await this.taskService.getAllTasks(orgId);
     }
 
     // หมวดที่ 4: เตือนความจำ
     if (command === 'เตือนพรุ่งนี้') {
-      return this.setReminderTomorrow(argsText);
+      return await this.reminderService.setReminderTomorrow(argsText, orgId);
     }
     if (command === 'เตือนทุกวัน') {
-      return this.setReminderDaily(argsText);
+      return await this.reminderService.setReminderDaily(argsText, orgId);
     }
 
     // หมวดที่ 5: Memory / บริบท
     if (command === 'บันทึกว่า') {
-      return this.saveMemory(argsText);
+      return await this.memoryService.saveMemory(argsText, orgId);
     }
     if (command === 'เราตกลงอะไร') {
-      return this.recallAgreement(argsText);
+      return await this.memoryService.recallAgreement(orgId);
     }
     if (command === 'ใครรับผิดชอบ') {
-      return this.recallResponsibility(argsText);
+      return await this.memoryService.recallResponsibility(argsText, orgId);
     }
 
     // หมวดที่ 6: สถานะ & ระบบ
@@ -99,7 +109,7 @@ export class CommandService {
     return 'ไม่รู้จักคำสั่ง พิมพ์ /help เพื่อดูรายการคำสั่ง';
   }
 
-  // File upload handler for image/file messages
+  // File upload handler
   async handleFileUpload(
     fileBuffer: Buffer,
     filename: string,
@@ -109,130 +119,116 @@ export class CommandService {
     const orgId = context.groupId || context.userId || 'personal';
 
     try {
-      // Check quota before upload
       await this.storageQuotaService.checkQuota(orgId, fileBuffer.length);
-
-      // Generate key and upload
       const key = this.storageService.generateKey(orgId, filename);
       const url = await this.storageService.uploadFile(key, fileBuffer, contentType);
-
-      // Track storage usage
       await this.storageQuotaService.trackUpload(orgId, fileBuffer.length);
-
       return `📁 เก็บไฟล์สำเร็จ\nชื่อ: ${filename}\nขนาด: ${(fileBuffer.length / 1024).toFixed(1)} KB\nลิงก์: ${url}`;
     } catch (error) {
-      if (error.message?.includes('quota')) {
+      if ((error as Error).message?.includes('quota')) {
         return '❌ พื้นที่จัดเก็บเต็ม กรุณาติดต่อแอดมิน';
       }
-      if (error.message?.includes('File too large')) {
+      if ((error as Error).message?.includes('File too large')) {
         return '❌ ไฟล์ใหญ่เกินไป (สูงสุด 20MB)';
       }
-      return `❌ เกิดข้อผิดพลาด: ${error.message}`;
+      return `❌ เกิดข้อผิดพลาด: ${(error as Error).message}`;
     }
   }
 
-  // หมวดที่ 1: จัดการไฟล์
+  // --- หมวดที่ 1: จัดการไฟล์ ---
   private storeFile(): string {
-    return 'กำลังเก็บไฟล์... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
+    return 'กำลังเก็บไฟล์... (ฟีเจอร์นี้ต้องแนบไฟล์มาพร้อมกับข้อความ)';
   }
 
   private findFile(query: string): string {
-    if (!query) {
-      return 'กรุณาระบุชื่อไฟล์ที่ต้องการค้นหา เช่น: /หาไฟล์ report.pdf';
-    }
-    return `กำลังค้นหาไฟล์ "${query}"... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
+    if (!query) return 'กรุณาระบุชื่อไฟล์ที่ต้องการค้นหา เช่น: /หาไฟล์ report.pdf';
+    return `กำลังค้นหาไฟล์ "${query}"... (ฟีเจอร์ค้นหาไฟล์อยู่ระหว่างพัฒนา)`;
   }
 
   private openRecentFile(): string {
-    return 'กำลังเปิดไฟล์ล่าสุด... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
+    return 'กำลังเปิดไฟล์ล่าสุด... (ฟีเจอร์เปิดไฟล์ล่าสุดอยู่ระหว่างพัฒนา)';
   }
 
-  // หมวดที่ 2: สรุปการคุย
-  private summarizeToday(): string {
-    return 'กำลังสรุปการคุยวันนี้... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
+  // --- หมวดที่ 2: สรุปการคุย ---
+  private async summarizeToday(orgId: string): Promise<string> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const msgs = await this.prisma.message.findMany({
+      where: { orgId, createdAt: { gte: today } },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    if (msgs.length === 0) return '📭 ยังไม่มีการพูดคุยในวันนี้เลยครับ';
+
+    const textToSummarize = msgs.map(m => m.text).join('\n');
+    return await this.aiService.summarizeText(textToSummarize);
   }
 
-  private summarizeYesterday(): string {
-    return 'กำลังสรุปการคุยเมื่อวาน... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
+  private async summarizeYesterday(orgId: string): Promise<string> {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const msgs = await this.prisma.message.findMany({
+      where: { orgId, createdAt: { gte: yesterday, lt: today } },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    if (msgs.length === 0) return '📭 ไม่มีบันทึกการพูดคุยของเมื่อวานครับ';
+
+    return await this.aiService.summarizeText(msgs.map(m => m.text).join('\n'));
   }
 
-  private summarizeTopic(topic: string): string {
-    if (!topic) {
-      return 'กรุณาระบุหัวข้อที่ต้องการสรุป เช่น: /สรุปเรื่อง ประชุมลูกค้า';
-    }
-    return `กำลังสรุปเรื่อง "${topic}"... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
+  private async summarizeTopic(topic: string, orgId: string): Promise<string> {
+    if (!topic) return 'กรุณาระบุหัวข้อที่ต้องการสรุป เช่น: /สรุปเรื่อง ประชุมลูกค้า';
+
+    const msgs = await this.prisma.message.findMany({
+      where: { orgId, text: { contains: topic } },
+      orderBy: { createdAt: 'desc' },
+      take: 50 // limitation for simple full text search
+    });
+
+    if (msgs.length === 0) return `📭 ไม่พบการพูดคุยเรื่อง "${topic}" ในแชทนี้ครับ`;
+
+    return await this.aiService.summarizeText(msgs.map(m => m.text).reverse().join('\n'));
   }
 
-  private summarizeUserWork(mention: string): string {
-    if (!mention) {
-      return 'กรุณาระบุชื่อผู้ใช้ เช่น: /สรุปงานของ @username';
-    }
-    return `กำลังสรุปงานของ ${mention}... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
+  private async summarizeUserWork(mention: string, orgId: string): Promise<string> {
+    if (!mention) return 'กรุณาระบุชื่อผู้ใช้ เช่น: /สรุปงานของ @username';
+
+    const cleanMention = mention.replace('@', '');
+    const tasks = await this.prisma.task.findMany({
+      where: { assignee: cleanMention, orgId }
+    });
+
+    if (tasks.length === 0) return `📭 ไม่พบงานของ ${mention} ครับ`;
+
+    return `📝 สรุปงานของ ${mention}:\n` + tasks.map((t, i) => `${i + 1}. ${t.title} [สถานะ: ${t.status}]`).join('\n');
   }
 
-  // หมวดที่ 3: งาน / Task
-  private createTask(taskText: string): string {
+  // --- หมวดที่ 3: งาน / Task ---
+  private async createTask(taskText: string, orgId: string): Promise<string> {
     if (!taskText) {
       return 'ฟอร์มสร้างงาน:\n1. ชื่องาน: ___\n2. รายละเอียด: ___\n3. กำหนดส่ง: ___\n\nหรือใช้รูปแบบเร็ว: /งาน: ส่งรายงานพรุ่งนี้';
     }
-    return `สร้างงาน: "${taskText}" สำเร็จ (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
+    return await this.taskService.createTask(taskText, orgId);
   }
 
-  private assignTask(args: string): string {
+  private async assignTask(args: string, orgId: string): Promise<string> {
     const parts = args.split(' ');
     if (parts.length < 2) {
       return 'กรุณาระบุรูปแบบ: /มอบหมาย @ชื่อ รายละเอียดงาน วันเวลา';
     }
-    const user = parts[0];
+    const user = parts[0].replace('@', '');
     const remaining = parts.slice(1).join(' ');
-    return `มอบหมายงานให้ ${user}: "${remaining}" (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
+    return await this.taskService.assignTask(user, remaining, orgId);
   }
 
-  private myTasks(): string {
-    return 'งานของคุณ:\n• ไม่มีงานที่กำลังทำ (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
-  }
-
-  private allTasks(): string {
-    return 'งานทั้งหมดในกลุ่ม:\n• ไม่มีงาน (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
-  }
-
-  // หมวดที่ 4: เตือนความจำ
-  private setReminderTomorrow(args: string): string {
-    if (!args) {
-      return 'กรุณาระบุเวลาและเรื่องที่ต้องการเตือน เช่น: /เตือนพรุ่งนี้ 10 โมง ประชุมลูกค้า';
-    }
-    return `ตั้งเตือนพรุ่งนี้: ${args} (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
-  }
-
-  private setReminderDaily(args: string): string {
-    if (!args) {
-      return 'กรุณาระบุเวลาและเรื่องที่ต้องการเตือน เช่น: /เตือนทุกวัน 9 โมง สแตนด์อัพ';
-    }
-    return `ตั้งเตือนทุกวัน: ${args} (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
-  }
-
-  // หมวดที่ 5: Memory / บริบท
-  private saveMemory(text: string): string {
-    if (!text) {
-      return 'กรุณาระบุข้อมูลที่ต้องการบันทึก เช่น: /บันทึกว่า เราใช้ราคานี้เป็นมาตรฐาน';
-    }
-    return `บันทึก: "${text}" สำเร็จ (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
-  }
-
-  private recallAgreement(topic: string): string {
-    return 'กำลังค้นหาข้อตกลง... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
-  }
-
-  private recallResponsibility(project: string): string {
-    if (!project) {
-      return 'กรุณาระบุชื่อโปรเจค เช่น: /ใครรับผิดชอบโปรเจคนี้';
-    }
-    return `กำลังค้นหาผู้รับผิดชอบ "${project}"... (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)`;
-  }
-
-  // หมวดที่ 6: สถานะ & ระบบ
+  // --- หมวดที่ 6: สถานะ & ระบบ ---
   private packageStatus(): string {
-    return 'สถานะแพ็กเกจ: ใช้งานปกติ (ฟีเจอร์นี้อยู่ระหว่างพัฒนา)';
+    return '✅ สถานะแพ็กเกจ: ใช้งานปกติ (Arkai AI Assistant Active)';
   }
 
   private storageStatus(orgId: string): string {
@@ -244,7 +240,7 @@ export class CommandService {
     return `📚 รายการคำสั่งที่ใช้ได้:
 
 📁 จัดการไฟล์
-• /เก็บไฟล์นี้
+• /เก็บไฟล์นี้ (แนบไฟล์มาพร้อมกับข้อความ)
 • /หาไฟล์ [ชื่อ]
 • /เปิดไฟล์ล่าสุด (/files)
 
@@ -256,23 +252,23 @@ export class CommandService {
 
 ✅ งาน / Task
 • /สร้างงาน
-• /งาน: [รายละเอียด]
-• /มอบหมาย @ชื่อ [งาน] [เวลา]
+• /งาน: [รายละเอียดงาน]
+• /มอบหมาย @ชื่อ [งาน]
 • /งานของฉัน (/tasks)
 • /งานทั้งหมด
 
 ⏰ เตือนความจำ
-• /เตือนพรุ่งนี้ [เวลา] [เรื่อง]
-• /เตือนทุกวัน [เวลา] [เรื่อง]
+• /เตือนพรุ่งนี้ [เรื่อง]
+• /เตือนทุกวัน [เรื่อง]
 
 🧠 Memory / บริบท
-• /บันทึกว่า [ข้อความ]
+• /บันทึกว่า [ข้อตกลงหรือความจำ]
 • /เราตกลงอะไร
-• /ใครรับผิดชอบโปรเจคนี้
+• /ใครรับผิดชอบ [โปรเจค/งาน]
 
 📊 สถานะ & ระบบ
 • /สถานะแพ็กเกจ
-• /พื้นที่เหลือเท่าไร
+• /พื้นที่เหลือเท่าไร (/storage)
 • /help`;
   }
 }

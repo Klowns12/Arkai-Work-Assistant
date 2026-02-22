@@ -3,14 +3,16 @@ import type { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import axios from 'axios';
 import { CommandService } from './command.service';
-import { AiService } from 'src/ai/ai.service';
+import { AiService } from '../ai/ai.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('webhook')
 export class WebhookController {
   constructor(
     private readonly commandService: CommandService,
     private readonly aiService: AiService,
-  ) {}
+    private readonly prisma: PrismaService,
+  ) { }
 
   @Post()
   async handleWebhook(@Req() req: Request, @Res() res: Response) {
@@ -60,9 +62,20 @@ export class WebhookController {
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text;
 
+        const orgId = context.groupId || context.userId || 'personal';
+
+        // บันทึกข้อความแชทลงฐานข้อมูลแบบ background ไม่ต้องรอให้เสร็จ
+        this.prisma.message.create({
+          data: {
+            text: userText,
+            sender: context.userId || 'unknown',
+            orgId: orgId,
+          }
+        }).catch(err => console.error('Failed to save message:', err));
+
         let responseText: string;
         if (userText.startsWith('/')) {
-          responseText = this.commandService.handle(userText, context);
+          responseText = await this.commandService.handle(userText, context);
         } else {
           responseText = await this.aiService.chat(userText);
         }
