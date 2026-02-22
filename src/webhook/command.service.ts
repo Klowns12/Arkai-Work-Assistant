@@ -28,16 +28,15 @@ export class CommandService {
   private registerCommands() {
     // --- File Management ---
     this.registerAliases(['เก็บไฟล์นี้', 'เก็บไฟล์', 'upload', 'savefile'], (_args) => {
-      return 'กำลังเก็บไฟล์... (ฟีเจอร์นี้ต้องแนบไฟล์มาพร้อมกับข้อความ)\n📁 Attach a file with this command to upload.';
+      return '📁 ส่งไฟล์/รูปภาพเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ\n📁 Just send a file/image to this chat — it will be saved automatically!';
     });
 
-    this.registerAliases(['หาไฟล์', 'findfile', 'search'], (_args) => {
-      if (!_args) return 'กรุณาระบุชื่อไฟล์ / Please specify a filename\nExample: /findfile report.pdf';
-      return `🔍 กำลังค้นหาไฟล์ "${_args}"... (ฟีเจอร์ค้นหาไฟล์อยู่ระหว่างพัฒนา)`;
+    this.registerAliases(['หาไฟล์', 'findfile', 'search'], async (_args, orgId) => {
+      return await this.findFiles(_args, orgId);
     });
 
-    this.registerAliases(['เปิดไฟล์ล่าสุด', 'files', 'recentfiles'], (_args) => {
-      return '📂 กำลังเปิดไฟล์ล่าสุด... (ฟีเจอร์อยู่ระหว่างพัฒนา)';
+    this.registerAliases(['เปิดไฟล์ล่าสุด', 'files', 'recentfiles'], async (_args, orgId) => {
+      return await this.getRecentFiles(orgId);
     });
 
     // --- Summarize Chat ---
@@ -148,7 +147,7 @@ export class CommandService {
     return '❓ ไม่รู้จักคำสั่ง / Unknown command\nพิมพ์ / Type: /help เพื่อดูรายการคำสั่ง / to see all commands';
   }
 
-  // File upload handler
+  // File upload handler — auto-save, no link shown
   async handleFileUpload(
     fileBuffer: Buffer,
     filename: string,
@@ -162,7 +161,22 @@ export class CommandService {
       const key = this.storageService.generateKey(orgId, filename);
       const url = await this.storageService.uploadFile(key, fileBuffer, contentType);
       await this.storageQuotaService.trackUpload(orgId, fileBuffer.length);
-      return `📁 เก็บไฟล์สำเร็จ / File saved!\nชื่อ/Name: ${filename}\nขนาด/Size: ${(fileBuffer.length / 1024).toFixed(1)} KB\nลิงก์/Link: ${url}`;
+
+      // Save file metadata to DB
+      await this.prisma.file.create({
+        data: {
+          filename,
+          storageKey: key,
+          storageUrl: url,
+          contentType,
+          sizeBytes: fileBuffer.length,
+          uploadedBy: context.userId || 'unknown',
+          orgId,
+        }
+      });
+
+      // Do NOT show link — only show via /findfile or /files
+      return `📁 เก็บไฟล์สำเร็จ / File saved!\n📄 ${filename}\n📦 ${(fileBuffer.length / 1024).toFixed(1)} KB\n🔒 ใช้ /files หรือ /findfile เพื่อเรียกดู`;
     } catch (error) {
       if ((error as Error).message?.includes('quota')) {
         return '❌ พื้นที่จัดเก็บเต็ม / Storage quota exceeded';
@@ -172,6 +186,35 @@ export class CommandService {
       }
       return `❌ เกิดข้อผิดพลาด / Error: ${(error as Error).message}`;
     }
+  }
+
+  // --- File search ---
+  private async findFiles(query: string, orgId: string): Promise<string> {
+    if (!query) return '🔍 กรุณาระบุชื่อไฟล์ / Please specify a filename\nExample: /findfile report';
+
+    const files = await this.prisma.file.findMany({
+      where: { orgId, filename: { contains: query } },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+
+    if (files.length === 0) return `🔍 ไม่พบไฟล์ "${query}" / No files found for "${query}"`;
+
+    return `🔍 ผลค้นหา "${query}" / Search results (${files.length}):\n` +
+      files.map((f, i) => `${i + 1}. 📄 ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${f.storageUrl}`).join('\n');
+  }
+
+  private async getRecentFiles(orgId: string): Promise<string> {
+    const files = await this.prisma.file.findMany({
+      where: { orgId },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+
+    if (files.length === 0) return '📂 ยังไม่มีไฟล์ / No files saved yet';
+
+    return `📂 ไฟล์ล่าสุด / Recent files (${files.length}):\n` +
+      files.map((f, i) => `${i + 1}. 📄 ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${f.storageUrl}`).join('\n');
   }
 
   // --- Summarize ---

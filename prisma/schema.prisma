@@ -44,3 +44,15 @@ model Message {
   orgId       String
   createdAt   DateTime  @default(now())
 }
+
+model File {
+  id          String    @id @default(uuid())
+  filename    String
+  storageKey  String
+  storageUrl  String
+  contentType String
+  sizeBytes   Int
+  uploadedBy  String
+  orgId       String
+  createdAt   DateTime  @default(now())
+}
