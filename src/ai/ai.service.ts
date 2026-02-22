@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+const MODEL = 'gemini-2.0-flash-lite';
+
 @Injectable()
 export class AiService {
   private genAI: GoogleGenerativeAI;
@@ -12,18 +14,29 @@ export class AiService {
     this.genAI = new GoogleGenerativeAI(this.apiKey);
   }
 
+  private handleError(error: unknown): string {
+    const msg = (error as Error).message || '';
+    if (msg.includes('429') || msg.includes('quota')) {
+      return '⏳ AI กำลังพักครู่ (โควต้าเต็มชั่วคราว)\nลองใหม่ในอีก 1-2 นาทีนะครับ';
+    }
+    if (msg.includes('API key')) {
+      return '⚠️ GEMINI_API_KEY ไม่ถูกต้อง';
+    }
+    console.error('AI Error:', error);
+    return '❌ AI มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะครับ';
+  }
+
   async summarizeText(text: string): Promise<string> {
     if (!this.apiKey) {
-      return '⚠️ ยังไม่ได้ตั้งค่า AI / AI not configured (GEMINI_API_KEY missing)';
+      return '⚠️ ยังไม่ได้ตั้งค่า AI (GEMINI_API_KEY)';
     }
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = this.genAI.getGenerativeModel({ model: MODEL });
     const prompt = `สรุปข้อความต่อไปนี้แบบสั้น กระชับ เป็นภาษาไทย ใช้ emoji ให้อ่านง่าย ถ้ามีงานหรือ action items ให้แยกออกมาเป็นรายการด้วย:\n\n${text}`;
     try {
       const result = await model.generateContent(prompt);
-      return `📋 สรุป / Summary:\n${result.response.text()}`;
+      return `📋 สรุป:\n${result.response.text()}`;
     } catch (error) {
-      console.error('AI Summarize Error:', error);
-      return `❌ AI Error: ${(error as Error).message}`;
+      return this.handleError(error);
     }
   }
 
@@ -31,7 +44,7 @@ export class AiService {
     if (!this.apiKey) {
       return { title: text.substring(0, 50) };
     }
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = this.genAI.getGenerativeModel({ model: MODEL });
     const today = new Date().toISOString().split('T')[0];
     const prompt = `วิเคราะห์ข้อความต่อไปนี้แล้วดึงข้อมูลเพื่อสร้างงาน (Task)
     วันนี้คือ: ${today}
@@ -49,7 +62,7 @@ export class AiService {
       return {
         title: parsed.title || text.substring(0, 50),
         description: parsed.description || undefined,
-        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined
+        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
       };
     } catch (error) {
       console.error('AI Extract Task Error:', error);
@@ -59,9 +72,9 @@ export class AiService {
 
   async chat(text: string): Promise<string> {
     if (!this.apiKey) {
-      return `🤖 ยังไม่ได้ตั้งค่า AI / AI not configured\nกรุณาตั้งค่า GEMINI_API_KEY`;
+      return '⚠️ ยังไม่ได้ตั้งค่า AI (GEMINI_API_KEY)';
     }
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = this.genAI.getGenerativeModel({ model: MODEL });
     const prompt = `คุณคือ Arkai ผู้ช่วยทำงานอัจฉริยะที่สุภาพ เป็นมิตร และเป็นมืออาชีพ
 ตอบคำถามหรือสนทนาในเรื่องทั่วไป ให้ตอบสั้นกระชับ ไม่เกิน 3-5 บรรทัด
 ถ้าผู้ใช้ถามเป็นภาษาไทยให้ตอบเป็นไทย ถ้าถามเป็นอังกฤษให้ตอบเป็นอังกฤษ
@@ -73,8 +86,7 @@ export class AiService {
       const result = await model.generateContent(prompt);
       return result.response.text();
     } catch (error) {
-      console.error('AI Chat Error:', error);
-      return `❌ AI Error: ${(error as Error).message}`;
+      return this.handleError(error);
     }
   }
 }
