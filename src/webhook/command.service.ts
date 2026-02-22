@@ -33,12 +33,12 @@ export class CommandService {
     // ─── 1. ไฟล์ / Files ─────────────────────────
     // ส่งไฟล์เข้ามา = เก็บอัตโนมัติ (ไม่ต้องใช้คำสั่ง)
     this.registerAliases(
-      ['files', 'เปิดไฟล์', 'ไฟล์'],
+      ['files', 'ไฟล์'],
       async (_args, orgId) => await this.getRecentFiles(orgId),
     );
     this.registerAliases(
-      ['findfile', 'หาไฟล์'],
-      async (args, orgId) => await this.findFiles(args, orgId),
+      ['file', 'ไฟล์ประเภท'],
+      async (args, orgId) => await this.filesByType(args, orgId),
     );
 
     // ─── 2. สรุปแชท / Summary ────────────────────
@@ -175,40 +175,54 @@ export class CommandService {
   // ═══════════════════════════════════════════════
   // File Search
   // ═══════════════════════════════════════════════
-  private async findFiles(query: string, orgId: string): Promise<string> {
-    if (!query) return '🔍 วิธีใช้: /findfile ชื่อไฟล์\nExample: /findfile report';
-
-    const files = await this.prisma.file.findMany({
-      where: { orgId, filename: { contains: query } },
-      orderBy: { createdAt: 'desc' },
-      take: 5,
-    });
-
-    if (files.length === 0) return `🔍 ไม่พบ "${query}"`;
-
-    const results: string[] = [];
-    for (const f of files) {
-      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
-      results.push(`📄 ${f.filename}\n📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n🔗 ${tempUrl}`);
-    }
-    return `🔍 ผลค้นหา "${query}" (${files.length}):\n⏳ ลิงก์หมดอายุใน 1 ชม.\n\n` + results.join('\n\n');
-  }
-
   private async getRecentFiles(orgId: string): Promise<string> {
     const files = await this.prisma.file.findMany({
       where: { orgId },
       orderBy: { createdAt: 'desc' },
-      take: 5,
+      take: 10,
     });
 
-    if (files.length === 0) return '📂 ยังไม่มีไฟล์';
+    if (files.length === 0) return '📂 ยังไม่มีไฟล์\nส่งไฟล์/รูปเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ!';
 
     const results: string[] = [];
     for (const f of files) {
       const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
-      results.push(`📄 ${f.filename}\n📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n🔗 ${tempUrl}`);
+      const ext = f.filename.split('.').pop()?.toUpperCase() || 'FILE';
+      results.push(`${this.fileIcon(ext)} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
     }
-    return `📂 ไฟล์ล่าสุด (${files.length}):\n⏳ ลิงก์หมดอายุใน 1 ชม.\n\n` + results.join('\n\n');
+    return `📂 ไฟล์ทั้งหมด (${files.length} ล่าสุด):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+  }
+
+  private async filesByType(ext: string, orgId: string): Promise<string> {
+    if (!ext) {
+      return '📁 วิธีใช้: /file [นามสกุล]\nตัวอย่าง:\n/file pdf — ดูไฟล์ PDF\n/file jpg — ดูรูปภาพ JPG\n/file xls — ดูไฟล์ Excel';
+    }
+
+    const cleanExt = ext.toLowerCase().replace('.', '');
+    const files = await this.prisma.file.findMany({
+      where: { orgId, filename: { endsWith: `.${cleanExt}` } },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    if (files.length === 0) return `📁 ไม่พบไฟล์ .${cleanExt}`;
+
+    const results: string[] = [];
+    for (const f of files) {
+      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+      results.push(`${this.fileIcon(cleanExt.toUpperCase())} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+    }
+    return `📁 ไฟล์ .${cleanExt} (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+  }
+
+  private fileIcon(ext: string): string {
+    const icons: Record<string, string> = {
+      PDF: '📕', DOC: '📘', DOCX: '📘', XLS: '📗', XLSX: '📗',
+      PPT: '📙', PPTX: '📙', JPG: '🖼️', JPEG: '🖼️', PNG: '🖼️',
+      GIF: '🖼️', MP4: '🎬', MOV: '🎬', MP3: '🎵', M4A: '🎵',
+      ZIP: '📦', RAR: '📦', TXT: '📝', CSV: '📊',
+    };
+    return icons[ext] || '📄';
   }
 
   // ═══════════════════════════════════════════════
@@ -255,12 +269,13 @@ export class CommandService {
     return `📚 คำสั่ง Arkai:
 
 📁 ไฟล์ — ส่งไฟล์/รูปเข้ามาเก็บอัตโนมัติ
-• /files — ดูไฟล์ล่าสุด
-• /findfile [ชื่อ] — ค้นหาไฟล์
+• /files — ดูไฟล์ทั้งหมด (10 ล่าสุด)
+• /file pdf — ดูเฉพาะไฟล์ PDF
+• /file jpg — ดูเฉพาะรูปภาพ
 
 📝 สรุปแชท
-• /summary — สรุปแชทวันนี้
-• /yesterday — สรุปเมื่อวาน
+• /summary — สรุปแชทวันนี้ (AI)
+• /yesterday — สรุปเมื่อวาน (AI)
 
 ✅ งาน
 • /task [รายละเอียด] — สร้างงาน
