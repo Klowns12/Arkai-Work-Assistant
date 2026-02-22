@@ -7,7 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AiModule } from './ai/ai.module';
 
 @Module({
-  imports: [ConfigModule.forRoot(), PrismaModule, AiModule, WebhookModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, AiModule, WebhookModule],
   controllers: [AppController],
   providers: [AppService],
 })
