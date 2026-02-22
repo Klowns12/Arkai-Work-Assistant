@@ -44,27 +44,43 @@ export class WebhookController {
       const groupId = event.source.groupId;
       const context = { sourceType, userId, groupId };
 
-      // Handle image/file messages
+      // Handle image/file messages — download from LINE and upload to storage
       if (event.type === 'message' && (event.message.type === 'image' || event.message.type === 'file')) {
-        // TODO: Download file from LINE content API and upload to storage
-        const responseText = await this.commandService.handleFileUpload(
-          Buffer.from('placeholder'), // Replace with actual file download
-          event.message.fileName || `image-${Date.now()}.jpg`,
-          event.message.contentProvider?.type === 'line' ? 'image/jpeg' : 'application/octet-stream',
-          context,
-        );
+        try {
+          const messageId = event.message.id;
+          const fileResponse = await axios.get(
+            `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              responseType: 'arraybuffer',
+            }
+          );
 
-        await this.replyMessage(replyToken, responseText, accessToken);
+          const fileBuffer = Buffer.from(fileResponse.data);
+          const filename = event.message.fileName || `file-${Date.now()}.${event.message.type === 'image' ? 'jpg' : 'bin'}`;
+          const contentType = (fileResponse.headers['content-type'] as string) || 'application/octet-stream';
+
+          const responseText = await this.commandService.handleFileUpload(
+            fileBuffer,
+            filename,
+            contentType,
+            context,
+          );
+
+          await this.replyMessage(replyToken, responseText, accessToken);
+        } catch (error) {
+          console.error('File download error:', error);
+          await this.replyMessage(replyToken, '❌ ไม่สามารถดาวน์โหลดไฟล์ได้ / Failed to download file', accessToken);
+        }
         continue;
       }
 
       // Handle text messages
       if (event.type === 'message' && event.message.type === 'text') {
         const userText = event.message.text;
-
         const orgId = context.groupId || context.userId || 'personal';
 
-        // บันทึกข้อความแชทลงฐานข้อมูลแบบ background ไม่ต้องรอให้เสร็จ
+        // Save all chat messages to DB for summarization (background, non-blocking)
         this.prisma.message.create({
           data: {
             text: userText,
@@ -77,6 +93,7 @@ export class WebhookController {
         if (userText.startsWith('/')) {
           responseText = await this.commandService.handle(userText, context);
         } else {
+          // Non-command messages: AI chat with Arkai personality
           responseText = await this.aiService.chat(userText);
         }
 
@@ -88,11 +105,14 @@ export class WebhookController {
   }
 
   private async replyMessage(replyToken: string, text: string, accessToken: string): Promise<void> {
+    // LINE has a 5000 character limit per message
+    const truncatedText = text.length > 4900 ? text.substring(0, 4900) + '\n...(ตัดข้อความเนื่องจากยาวเกินไป)' : text;
+
     await axios.post(
       'https://api.line.me/v2/bot/message/reply',
       {
         replyToken: replyToken,
-        messages: [{ type: 'text', text }],
+        messages: [{ type: 'text', text: truncatedText }],
       },
       {
         headers: {
