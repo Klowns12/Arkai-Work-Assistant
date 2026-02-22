@@ -176,21 +176,30 @@ export class CommandService {
   // File Search
   // ═══════════════════════════════════════════════
   private async getRecentFiles(orgId: string): Promise<string> {
-    const files = await this.prisma.file.findMany({
-      where: { orgId },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    });
+    try {
+      const files = await this.prisma.file.findMany({
+        where: { orgId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
 
-    if (files.length === 0) return '📂 ยังไม่มีไฟล์\nส่งไฟล์/รูปเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ!';
+      if (files.length === 0) return '📂 ยังไม่มีไฟล์\nส่งไฟล์/รูปเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ!';
 
-    const results: string[] = [];
-    for (const f of files) {
-      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
-      const ext = f.filename.split('.').pop()?.toUpperCase() || 'FILE';
-      results.push(`${this.fileIcon(ext)} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+      const results: string[] = [];
+      for (const f of files) {
+        try {
+          const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+          const ext = f.filename.split('.').pop()?.toUpperCase() || 'FILE';
+          results.push(`${this.fileIcon(ext)} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+        } catch {
+          results.push(`📄 ${f.filename} (ลิงก์ไม่พร้อม)`);
+        }
+      }
+      return `📂 ไฟล์ทั้งหมด (${files.length} ล่าสุด):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+    } catch (error) {
+      console.error('getRecentFiles error:', error);
+      return '❌ โหลดรายการไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง';
     }
-    return `📂 ไฟล์ทั้งหมด (${files.length} ล่าสุด):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
   }
 
   private async filesByType(ext: string, orgId: string): Promise<string> {
@@ -198,21 +207,30 @@ export class CommandService {
       return '📁 วิธีใช้: /file [นามสกุล]\nตัวอย่าง:\n/file pdf — ดูไฟล์ PDF\n/file jpg — ดูรูปภาพ JPG\n/file xls — ดูไฟล์ Excel';
     }
 
-    const cleanExt = ext.toLowerCase().replace('.', '');
-    const files = await this.prisma.file.findMany({
-      where: { orgId, filename: { endsWith: `.${cleanExt}` } },
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    });
+    try {
+      const cleanExt = ext.toLowerCase().replace('.', '');
+      const files = await this.prisma.file.findMany({
+        where: { orgId, filename: { endsWith: `.${cleanExt}` } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
 
-    if (files.length === 0) return `📁 ไม่พบไฟล์ .${cleanExt}`;
+      if (files.length === 0) return `📁 ไม่พบไฟล์ .${cleanExt}`;
 
-    const results: string[] = [];
-    for (const f of files) {
-      const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
-      results.push(`${this.fileIcon(cleanExt.toUpperCase())} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+      const results: string[] = [];
+      for (const f of files) {
+        try {
+          const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+          results.push(`${this.fileIcon(cleanExt.toUpperCase())} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+        } catch {
+          results.push(`📄 ${f.filename} (ลิงก์ไม่พร้อม)`);
+        }
+      }
+      return `📁 ไฟล์ .${cleanExt} (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+    } catch (error) {
+      console.error('filesByType error:', error);
+      return '❌ โหลดรายการไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง';
     }
-    return `📁 ไฟล์ .${cleanExt} (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
   }
 
   private fileIcon(ext: string): string {
