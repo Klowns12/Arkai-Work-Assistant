@@ -6,8 +6,12 @@ import { ReminderService } from '../reminder/reminder.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+type CommandHandler = (argsText: string, orgId: string, context?: { sourceType: 'user' | 'group'; userId?: string; groupId?: string }) => Promise<string> | string;
+
 @Injectable()
 export class CommandService {
+  private commandMap: Map<string, CommandHandler>;
+
   constructor(
     private readonly storageService: StorageService,
     private readonly storageQuotaService: StorageQuotaService,
@@ -16,97 +20,132 @@ export class CommandService {
     private readonly reminderService: ReminderService,
     private readonly aiService: AiService,
     private readonly prisma: PrismaService,
-  ) { }
+  ) {
+    this.commandMap = new Map<string, CommandHandler>();
+    this.registerCommands();
+  }
+
+  private registerCommands() {
+    // --- File Management ---
+    this.registerAliases(['เก็บไฟล์นี้', 'เก็บไฟล์', 'upload', 'savefile'], (_args) => {
+      return 'กำลังเก็บไฟล์... (ฟีเจอร์นี้ต้องแนบไฟล์มาพร้อมกับข้อความ)\n📁 Attach a file with this command to upload.';
+    });
+
+    this.registerAliases(['หาไฟล์', 'findfile', 'search'], (_args) => {
+      if (!_args) return 'กรุณาระบุชื่อไฟล์ / Please specify a filename\nExample: /findfile report.pdf';
+      return `🔍 กำลังค้นหาไฟล์ "${_args}"... (ฟีเจอร์ค้นหาไฟล์อยู่ระหว่างพัฒนา)`;
+    });
+
+    this.registerAliases(['เปิดไฟล์ล่าสุด', 'files', 'recentfiles'], (_args) => {
+      return '📂 กำลังเปิดไฟล์ล่าสุด... (ฟีเจอร์อยู่ระหว่างพัฒนา)';
+    });
+
+    // --- Summarize Chat ---
+    this.registerAliases(['สรุปวันนี้', 'sum', 'today', 'summary'], async (_args, orgId) => {
+      return await this.summarizeToday(orgId);
+    });
+
+    this.registerAliases(['สรุปเมื่อวาน', 'yesterday'], async (_args, orgId) => {
+      return await this.summarizeYesterday(orgId);
+    });
+
+    this.registerAliases(['สรุปเรื่อง', 'topic', 'about'], async (args, orgId) => {
+      return await this.summarizeTopic(args, orgId);
+    });
+
+    this.registerAliases(['สรุปงานของ', 'workof', 'userwork'], async (args, orgId) => {
+      return await this.summarizeUserWork(args, orgId);
+    });
+
+    // --- Task Management ---
+    this.registerAliases(['สร้างงาน', 'newtask', 'createtask'], async (_args, orgId) => {
+      return await this.createTask('', orgId);
+    });
+
+    this.registerAliases(['มอบหมาย', 'assign'], async (args, orgId) => {
+      return await this.assignTask(args, orgId);
+    });
+
+    this.registerAliases(['งานของฉัน', 'tasks', 'mytasks'], async (_args, orgId, context) => {
+      return await this.taskService.getMyTasks(context?.userId || 'unknown', orgId);
+    });
+
+    this.registerAliases(['งานทั้งหมด', 'alltasks'], async (_args, orgId) => {
+      return await this.taskService.getAllTasks(orgId);
+    });
+
+    // --- Reminders ---
+    this.registerAliases(['เตือนพรุ่งนี้', 'remindtomorrow', 'remind'], async (args, orgId) => {
+      return await this.reminderService.setReminderTomorrow(args, orgId);
+    });
+
+    this.registerAliases(['เตือนทุกวัน', 'reminddaily', 'daily'], async (args, orgId) => {
+      return await this.reminderService.setReminderDaily(args, orgId);
+    });
+
+    // --- Memory ---
+    this.registerAliases(['บันทึกว่า', 'note', 'remember', 'save'], async (args, orgId) => {
+      return await this.memoryService.saveMemory(args, orgId);
+    });
+
+    this.registerAliases(['เราตกลงอะไร', 'agreements', 'decided'], async (_args, orgId) => {
+      return await this.memoryService.recallAgreement(orgId);
+    });
+
+    this.registerAliases(['ใครรับผิดชอบ', 'whois', 'responsible'], async (args, orgId) => {
+      return await this.memoryService.recallResponsibility(args, orgId);
+    });
+
+    // --- System & Status ---
+    this.registerAliases(['สถานะแพ็กเกจ', 'status', 'plan'], (_args) => {
+      return '✅ สถานะแพ็กเกจ / Package Status: Active (Arkai AI Assistant)';
+    });
+
+    this.registerAliases(['พื้นที่เหลือเท่าไร', 'storage', 'quota'], (_args, orgId) => {
+      return this.storageStatus(orgId);
+    });
+
+    this.registerAliases(['วิธีใช้', 'help', 'menu', 'คำสั่ง', 'commands'], (_args) => {
+      return this.help();
+    });
+  }
+
+  private registerAliases(aliases: string[], handler: CommandHandler) {
+    for (const alias of aliases) {
+      this.commandMap.set(alias.toLowerCase(), handler);
+    }
+  }
 
   async handle(text: string, context?: { sourceType: 'user' | 'group'; userId?: string; groupId?: string }): Promise<string> {
     const normalizedText = text.trim();
     const orgId = context?.groupId || context?.userId || 'personal';
 
-    // Only support / prefix
     if (!normalizedText.startsWith('/')) {
-      return 'กรุณาใช้รูปแบบ: /[คำสั่ง] เช่น /สรุปวันนี้ หรือ /help';
+      return 'กรุณาใช้รูปแบบ / Please use format: /[command]\nExample: /help, /สรุปวันนี้, /today';
     }
-    const commandText = normalizedText.substring(1).trim();
 
-    const [command, ...args] = commandText.split(' ');
+    const commandText = normalizedText.substring(1).trim();
+    const [rawCommand, ...args] = commandText.split(' ');
+    const command = rawCommand.toLowerCase();
     const argsText = args.join(' ');
 
-    // หมวดที่ 1: จัดการไฟล์
-    if (command === 'เก็บไฟล์นี้' || command === 'เก็บไฟล์') {
-      return this.storeFile();
+    // Handle /งาน: and /task: prefix
+    if (command.startsWith('งาน:') || command.startsWith('task:')) {
+      const prefixLen = command.startsWith('งาน:') ? 4 : 5;
+      const taskText = command.substring(prefixLen).trim() + ' ' + argsText;
+      return await this.taskService.createTask(taskText.trim(), orgId);
     }
-    if (command === 'หาไฟล์') {
-      return this.findFile(argsText);
-    }
-    if (command === 'เปิดไฟล์ล่าสุด' || command === 'files') {
-      return this.openRecentFile();
-    }
-
-    // หมวดที่ 2: สรุปการคุย
-    if (command === 'สรุปวันนี้' || command === 'sum' || command === 'today') {
-      return await this.summarizeToday(orgId);
-    }
-    if (command === 'สรุปเมื่อวาน') {
-      return await this.summarizeYesterday(orgId);
-    }
-    if (command === 'สรุปเรื่อง') {
-      return await this.summarizeTopic(argsText, orgId);
-    }
-    if (command === 'สรุปงานของ') {
-      return await this.summarizeUserWork(argsText, orgId);
+    if (command === 'งาน:' || command === 'task:') {
+      return await this.taskService.createTask(argsText, orgId);
     }
 
-    // หมวดที่ 3: งาน / Task
-    if (command === 'สร้างงาน') {
-      return await this.createTask('', orgId);
-    }
-    if (command === 'งาน:') {
-      return await this.createTask(argsText, orgId);
-    }
-    if (command.startsWith('งาน:')) {
-      return await this.createTask(command.substring(4).trim() + ' ' + argsText, orgId);
-    }
-    if (command === 'มอบหมาย') {
-      return await this.assignTask(argsText, orgId);
-    }
-    if (command === 'งานของฉัน' || command === 'tasks') {
-      return await this.taskService.getMyTasks(context?.userId || 'unknown', orgId);
-    }
-    if (command === 'งานทั้งหมด') {
-      return await this.taskService.getAllTasks(orgId);
+    // Look up in command map
+    const handler = this.commandMap.get(command);
+    if (handler) {
+      return await handler(argsText, orgId, context);
     }
 
-    // หมวดที่ 4: เตือนความจำ
-    if (command === 'เตือนพรุ่งนี้') {
-      return await this.reminderService.setReminderTomorrow(argsText, orgId);
-    }
-    if (command === 'เตือนทุกวัน') {
-      return await this.reminderService.setReminderDaily(argsText, orgId);
-    }
-
-    // หมวดที่ 5: Memory / บริบท
-    if (command === 'บันทึกว่า') {
-      return await this.memoryService.saveMemory(argsText, orgId);
-    }
-    if (command === 'เราตกลงอะไร') {
-      return await this.memoryService.recallAgreement(orgId);
-    }
-    if (command === 'ใครรับผิดชอบ') {
-      return await this.memoryService.recallResponsibility(argsText, orgId);
-    }
-
-    // หมวดที่ 6: สถานะ & ระบบ
-    if (command === 'สถานะแพ็กเกจ') {
-      return this.packageStatus();
-    }
-    if (command === 'พื้นที่เหลือเท่าไร' || command === 'storage') {
-      return this.storageStatus(orgId);
-    }
-    if (command === 'วิธีใช้' || command === 'help') {
-      return this.help();
-    }
-
-    return 'ไม่รู้จักคำสั่ง พิมพ์ /help เพื่อดูรายการคำสั่ง';
+    return '❓ ไม่รู้จักคำสั่ง / Unknown command\nพิมพ์ / Type: /help เพื่อดูรายการคำสั่ง / to see all commands';
   }
 
   // File upload handler
@@ -123,33 +162,19 @@ export class CommandService {
       const key = this.storageService.generateKey(orgId, filename);
       const url = await this.storageService.uploadFile(key, fileBuffer, contentType);
       await this.storageQuotaService.trackUpload(orgId, fileBuffer.length);
-      return `📁 เก็บไฟล์สำเร็จ\nชื่อ: ${filename}\nขนาด: ${(fileBuffer.length / 1024).toFixed(1)} KB\nลิงก์: ${url}`;
+      return `📁 เก็บไฟล์สำเร็จ / File saved!\nชื่อ/Name: ${filename}\nขนาด/Size: ${(fileBuffer.length / 1024).toFixed(1)} KB\nลิงก์/Link: ${url}`;
     } catch (error) {
       if ((error as Error).message?.includes('quota')) {
-        return '❌ พื้นที่จัดเก็บเต็ม กรุณาติดต่อแอดมิน';
+        return '❌ พื้นที่จัดเก็บเต็ม / Storage quota exceeded';
       }
       if ((error as Error).message?.includes('File too large')) {
-        return '❌ ไฟล์ใหญ่เกินไป (สูงสุด 20MB)';
+        return '❌ ไฟล์ใหญ่เกินไป / File too large (max 20MB)';
       }
-      return `❌ เกิดข้อผิดพลาด: ${(error as Error).message}`;
+      return `❌ เกิดข้อผิดพลาด / Error: ${(error as Error).message}`;
     }
   }
 
-  // --- หมวดที่ 1: จัดการไฟล์ ---
-  private storeFile(): string {
-    return 'กำลังเก็บไฟล์... (ฟีเจอร์นี้ต้องแนบไฟล์มาพร้อมกับข้อความ)';
-  }
-
-  private findFile(query: string): string {
-    if (!query) return 'กรุณาระบุชื่อไฟล์ที่ต้องการค้นหา เช่น: /หาไฟล์ report.pdf';
-    return `กำลังค้นหาไฟล์ "${query}"... (ฟีเจอร์ค้นหาไฟล์อยู่ระหว่างพัฒนา)`;
-  }
-
-  private openRecentFile(): string {
-    return 'กำลังเปิดไฟล์ล่าสุด... (ฟีเจอร์เปิดไฟล์ล่าสุดอยู่ระหว่างพัฒนา)';
-  }
-
-  // --- หมวดที่ 2: สรุปการคุย ---
+  // --- Summarize ---
   private async summarizeToday(orgId: string): Promise<string> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -158,7 +183,7 @@ export class CommandService {
       orderBy: { createdAt: 'asc' }
     });
 
-    if (msgs.length === 0) return '📭 ยังไม่มีการพูดคุยในวันนี้เลยครับ';
+    if (msgs.length === 0) return '📭 ยังไม่มีการพูดคุยในวันนี้ / No messages today';
 
     const textToSummarize = msgs.map(m => m.text).join('\n');
     return await this.aiService.summarizeText(textToSummarize);
@@ -176,42 +201,42 @@ export class CommandService {
       orderBy: { createdAt: 'asc' }
     });
 
-    if (msgs.length === 0) return '📭 ไม่มีบันทึกการพูดคุยของเมื่อวานครับ';
+    if (msgs.length === 0) return '📭 ไม่มีบันทึกเมื่อวาน / No messages yesterday';
 
     return await this.aiService.summarizeText(msgs.map(m => m.text).join('\n'));
   }
 
   private async summarizeTopic(topic: string, orgId: string): Promise<string> {
-    if (!topic) return 'กรุณาระบุหัวข้อที่ต้องการสรุป เช่น: /สรุปเรื่อง ประชุมลูกค้า';
+    if (!topic) return 'กรุณาระบุหัวข้อ / Please specify a topic\nExample: /topic meeting';
 
     const msgs = await this.prisma.message.findMany({
       where: { orgId, text: { contains: topic } },
       orderBy: { createdAt: 'desc' },
-      take: 50 // limitation for simple full text search
+      take: 50
     });
 
-    if (msgs.length === 0) return `📭 ไม่พบการพูดคุยเรื่อง "${topic}" ในแชทนี้ครับ`;
+    if (msgs.length === 0) return `📭 ไม่พบเรื่อง "${topic}" / No messages about "${topic}"`;
 
     return await this.aiService.summarizeText(msgs.map(m => m.text).reverse().join('\n'));
   }
 
   private async summarizeUserWork(mention: string, orgId: string): Promise<string> {
-    if (!mention) return 'กรุณาระบุชื่อผู้ใช้ เช่น: /สรุปงานของ @username';
+    if (!mention) return 'กรุณาระบุชื่อ / Please specify a user\nExample: /workof @username';
 
     const cleanMention = mention.replace('@', '');
     const tasks = await this.prisma.task.findMany({
       where: { assignee: cleanMention, orgId }
     });
 
-    if (tasks.length === 0) return `📭 ไม่พบงานของ ${mention} ครับ`;
+    if (tasks.length === 0) return `📭 ไม่พบงานของ ${mention} / No tasks found for ${mention}`;
 
-    return `📝 สรุปงานของ ${mention}:\n` + tasks.map((t, i) => `${i + 1}. ${t.title} [สถานะ: ${t.status}]`).join('\n');
+    return `📝 สรุปงานของ / Tasks for ${mention}:\n` + tasks.map((t, i) => `${i + 1}. ${t.title} [${t.status}]`).join('\n');
   }
 
-  // --- หมวดที่ 3: งาน / Task ---
+  // --- Task ---
   private async createTask(taskText: string, orgId: string): Promise<string> {
     if (!taskText) {
-      return 'ฟอร์มสร้างงาน:\n1. ชื่องาน: ___\n2. รายละเอียด: ___\n3. กำหนดส่ง: ___\n\nหรือใช้รูปแบบเร็ว: /งาน: ส่งรายงานพรุ่งนี้';
+      return '📋 สร้างงาน / Create Task:\nใช้ / Use: /task: [details]\nตัวอย่าง / Example: /task: Submit report tomorrow';
     }
     return await this.taskService.createTask(taskText, orgId);
   }
@@ -219,56 +244,52 @@ export class CommandService {
   private async assignTask(args: string, orgId: string): Promise<string> {
     const parts = args.split(' ');
     if (parts.length < 2) {
-      return 'กรุณาระบุรูปแบบ: /มอบหมาย @ชื่อ รายละเอียดงาน วันเวลา';
+      return 'รูปแบบ / Format: /assign @name task details\nตัวอย่าง / Example: /assign @john finish design by Friday';
     }
     const user = parts[0].replace('@', '');
     const remaining = parts.slice(1).join(' ');
     return await this.taskService.assignTask(user, remaining, orgId);
   }
 
-  // --- หมวดที่ 6: สถานะ & ระบบ ---
-  private packageStatus(): string {
-    return '✅ สถานะแพ็กเกจ: ใช้งานปกติ (Arkai AI Assistant Active)';
-  }
-
+  // --- System ---
   private storageStatus(orgId: string): string {
     const status = this.storageQuotaService.getStorageStatus(orgId);
-    return `📊 พื้นที่จัดเก็บ\nใช้ไป: ${status.used}\nโควต้า: ${status.quota}\nคงเหลือ: ${100 - status.percentage}% (${status.fileCount} ไฟล์)`;
+    return `📊 พื้นที่จัดเก็บ / Storage\nUsed: ${status.used}\nQuota: ${status.quota}\nRemaining: ${100 - status.percentage}% (${status.fileCount} files)`;
   }
 
   private help(): string {
-    return `📚 รายการคำสั่งที่ใช้ได้:
+    return `📚 Arkai Commands / คำสั่ง Arkai:
 
-📁 จัดการไฟล์
-• /เก็บไฟล์นี้ (แนบไฟล์มาพร้อมกับข้อความ)
-• /หาไฟล์ [ชื่อ]
-• /เปิดไฟล์ล่าสุด (/files)
+📁 Files / ไฟล์
+• /upload, /เก็บไฟล์ — Save file / เก็บไฟล์
+• /findfile [name], /หาไฟล์ — Find file / หาไฟล์
+• /files, /เปิดไฟล์ล่าสุด — Recent files / ไฟล์ล่าสุด
 
-📝 สรุปการคุย
-• /สรุปวันนี้ (/sum, /today)
-• /สรุปเมื่อวาน
-• /สรุปเรื่อง [หัวข้อ]
-• /สรุปงานของ @ชื่อ
+📝 Summary / สรุป
+• /today, /สรุปวันนี้ — Today's summary / สรุปวันนี้
+• /yesterday, /สรุปเมื่อวาน — Yesterday / เมื่อวาน
+• /topic [subject], /สรุปเรื่อง — By topic / ตามหัวข้อ
+• /workof @name, /สรุปงานของ — User's work / งานของคน
 
-✅ งาน / Task
-• /สร้างงาน
-• /งาน: [รายละเอียดงาน]
-• /มอบหมาย @ชื่อ [งาน]
-• /งานของฉัน (/tasks)
-• /งานทั้งหมด
+✅ Tasks / งาน
+• /newtask, /สร้างงาน — New task / สร้างงานใหม่
+• /task: [details], /งาน: — Quick create / สร้างเร็ว
+• /assign @name [task], /มอบหมาย — Assign / มอบหมาย
+• /mytasks, /งานของฉัน — My tasks / งานของฉัน
+• /alltasks, /งานทั้งหมด — All tasks / งานทั้งหมด
 
-⏰ เตือนความจำ
-• /เตือนพรุ่งนี้ [เรื่อง]
-• /เตือนทุกวัน [เรื่อง]
+⏰ Reminders / เตือน
+• /remind [text], /เตือนพรุ่งนี้ — Tomorrow / พรุ่งนี้
+• /daily [text], /เตือนทุกวัน — Daily / ทุกวัน
 
-🧠 Memory / บริบท
-• /บันทึกว่า [ข้อตกลงหรือความจำ]
-• /เราตกลงอะไร
-• /ใครรับผิดชอบ [โปรเจค/งาน]
+🧠 Memory / ความจำ
+• /note [text], /บันทึกว่า — Save note / บันทึก
+• /agreements, /เราตกลงอะไร — Recall / ทบทวน
+• /whois [topic], /ใครรับผิดชอบ — Who's responsible
 
-📊 สถานะ & ระบบ
-• /สถานะแพ็กเกจ
-• /พื้นที่เหลือเท่าไร (/storage)
-• /help`;
+📊 System / ระบบ
+• /status, /สถานะแพ็กเกจ — Package status
+• /storage, /พื้นที่เหลือเท่าไร — Storage info
+• /help, /วิธีใช้ — This menu / เมนูนี้`;
   }
 }
