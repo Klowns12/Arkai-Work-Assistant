@@ -7,40 +7,57 @@ export class ReminderService {
 
     async setReminderTomorrow(topic: string, orgId: string): Promise<string> {
         if (!topic) {
-            return '⏰ กรุณาระบุเรื่องที่ต้องการเตือน / Please specify a reminder topic\nExample: /remind Submit report';
+            return '⏰ กรุณาระบุเรื่องที่ต้องการเตือน\nExample: /remind ส่งรายงาน';
         }
-        const d = new Date();
-        d.setDate(d.getDate() + 1);
-        d.setHours(9, 0, 0, 0);
-        await this.prisma.reminder.create({
-            data: { topic, time: d, recurring: false, orgId }
-        });
-        return `⏰ ตั้งเตือนพรุ่งนี้ / Reminder set for tomorrow\n📋 เรื่อง / Topic: "${topic}"\n🕘 เวลา / Time: ${d.toLocaleDateString('th-TH')} 09:00`;
+
+        try {
+            const d = new Date();
+            d.setDate(d.getDate() + 1);
+            d.setHours(9, 0, 0, 0);
+            await this.prisma.reminder.create({
+                data: { topic: topic.substring(0, 500), time: d, recurring: false, orgId }
+            });
+            return `⏰ ตั้งเตือนพรุ่งนี้!\n📋 เรื่อง: "${topic.substring(0, 100)}"\n🕘 เวลา: ${d.toLocaleDateString('th-TH')} 09:00`;
+        } catch (error) {
+            console.error('setReminderTomorrow error:', error);
+            return '❌ ตั้งเตือนไม่สำเร็จ กรุณาลองใหม่';
+        }
     }
 
     async setReminderDaily(topic: string, orgId: string): Promise<string> {
         if (!topic) {
-            return '⏰ กรุณาระบุเรื่องที่ต้องการเตือน / Please specify a reminder topic\nExample: /daily Check emails';
+            return '⏰ กรุณาระบุเรื่องที่ต้องการเตือน\nExample: /daily เช็คอีเมล';
         }
-        const d = new Date();
-        d.setHours(9, 0, 0, 0);
-        await this.prisma.reminder.create({
-            data: { topic, time: d, recurring: true, orgId }
-        });
-        return `⏰ ตั้งเตือนทุกวัน / Daily reminder set\n📋 เรื่อง / Topic: "${topic}"\n🔁 ทุกวัน เวลา 09:00 / Every day at 09:00`;
+
+        try {
+            const d = new Date();
+            d.setHours(9, 0, 0, 0);
+            await this.prisma.reminder.create({
+                data: { topic: topic.substring(0, 500), time: d, recurring: true, orgId }
+            });
+            return `⏰ ตั้งเตือนทุกวัน!\n📋 เรื่อง: "${topic.substring(0, 100)}"\n🔁 ทุกวัน เวลา 09:00`;
+        } catch (error) {
+            console.error('setReminderDaily error:', error);
+            return '❌ ตั้งเตือนไม่สำเร็จ กรุณาลองใหม่';
+        }
     }
 
     async getReminders(orgId: string): Promise<string> {
-        const reminders = await this.prisma.reminder.findMany({
-            where: { orgId },
-            orderBy: { createdAt: 'desc' },
-            take: 10
-        });
+        try {
+            const reminders = await this.prisma.reminder.findMany({
+                where: { orgId },
+                orderBy: { createdAt: 'desc' },
+                take: 10
+            });
 
-        if (reminders.length === 0) return '📭 ไม่มีการเตือนความจำ / No reminders set';
+            if (reminders.length === 0) return '📭 ไม่มีการเตือนความจำ';
 
-        return `⏰ รายการเตือน / Reminders:\n` + reminders.map((r, i) =>
-            `${i + 1}. ${r.topic} ${r.recurring ? '🔁' : '📌'} ${r.time.toLocaleDateString('th-TH')}`
-        ).join('\n');
+            return `⏰ รายการเตือน:\n` + reminders.map((r, i) =>
+                `${i + 1}. ${r.topic} ${r.recurring ? '🔁' : '📌'} ${r.time.toLocaleDateString('th-TH')}`
+            ).join('\n');
+        } catch (error) {
+            console.error('getReminders error:', error);
+            return '❌ โหลดรายการเตือนไม่สำเร็จ';
+        }
     }
 }

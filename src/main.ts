@@ -10,4 +10,18 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   console.log(`🚀 Arkai Backend running on port ${port}`);
 }
-bootstrap();
+
+// Catch unhandled errors to prevent silent crashes
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('🔥 Uncaught Exception:', error);
+  // Don't exit — let NestJS handle graceful shutdown
+});
+
+bootstrap().catch((err) => {
+  console.error('❌ Bootstrap failed:', err);
+  process.exit(1);
+});

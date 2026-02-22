@@ -246,38 +246,53 @@ export class CommandService {
   // ═══════════════════════════════════════════════
   // Summarize Chat
   // ═══════════════════════════════════════════════
+  private truncateForAI(text: string, maxChars = 8000): string {
+    if (text.length <= maxChars) return text;
+    return text.substring(0, maxChars) + '\n...(ข้อความถูกตัดเพื่อประมวลผล)';
+  }
+
   private async summarizeToday(orgId: string): Promise<string> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const msgs = await this.prisma.message.findMany({
-      where: { orgId, createdAt: { gte: today } },
-      orderBy: { createdAt: 'asc' },
-    });
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const msgs = await this.prisma.message.findMany({
+        where: { orgId, createdAt: { gte: today } },
+        orderBy: { createdAt: 'asc' },
+        take: 200, // Limit to prevent token overflow
+      });
 
-    if (msgs.length === 0) return '📭 ยังไม่มีแชทวันนี้';
+      if (msgs.length === 0) return '📭 ยังไม่มีแชทวันนี้';
 
-    return await this.aiService.summarizeText(
-      msgs.map((m) => m.text).join('\n'),
-    );
+      const text = this.truncateForAI(msgs.map((m) => m.text).join('\n'));
+      return await this.aiService.summarizeText(text);
+    } catch (error) {
+      console.error('summarizeToday error:', error);
+      return '❌ สรุปแชทไม่สำเร็จ ลองใหม่อีกครั้ง';
+    }
   }
 
   private async summarizeYesterday(orgId: string): Promise<string> {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    const msgs = await this.prisma.message.findMany({
-      where: { orgId, createdAt: { gte: yesterday, lt: today } },
-      orderBy: { createdAt: 'asc' },
-    });
+      const msgs = await this.prisma.message.findMany({
+        where: { orgId, createdAt: { gte: yesterday, lt: today } },
+        orderBy: { createdAt: 'asc' },
+        take: 200,
+      });
 
-    if (msgs.length === 0) return '📭 ไม่มีแชทเมื่อวาน';
+      if (msgs.length === 0) return '📭 ไม่มีแชทเมื่อวาน';
 
-    return await this.aiService.summarizeText(
-      msgs.map((m) => m.text).join('\n'),
-    );
+      const text = this.truncateForAI(msgs.map((m) => m.text).join('\n'));
+      return await this.aiService.summarizeText(text);
+    } catch (error) {
+      console.error('summarizeYesterday error:', error);
+      return '❌ สรุปแชทไม่สำเร็จ ลองใหม่อีกครั้ง';
+    }
   }
 
   // ═══════════════════════════════════════════════
