@@ -44,8 +44,9 @@ export class WebhookController {
       const groupId = event.source.groupId;
       const context = { sourceType, userId, groupId };
 
-      // Handle image/file messages — download from LINE and upload to storage
-      if (event.type === 'message' && (event.message.type === 'image' || event.message.type === 'file')) {
+      // Auto-save: เก็บไฟล์อัตโนมัติเมื่อ User ส่งไฟล์/รูป/วิดีโอ/เสียงเข้ามา (ไม่ต้องใช้คำสั่ง)
+      const fileTypes = ['image', 'video', 'audio', 'file'];
+      if (event.type === 'message' && fileTypes.includes(event.message.type)) {
         try {
           const messageId = event.message.id;
           const fileResponse = await axios.get(
@@ -57,7 +58,8 @@ export class WebhookController {
           );
 
           const fileBuffer = Buffer.from(fileResponse.data);
-          const filename = event.message.fileName || `file-${Date.now()}.${event.message.type === 'image' ? 'jpg' : 'bin'}`;
+          const extMap: Record<string, string> = { image: 'jpg', video: 'mp4', audio: 'm4a', file: 'bin' };
+          const filename = event.message.fileName || `${event.message.type}-${Date.now()}.${extMap[event.message.type] || 'bin'}`;
           const contentType = (fileResponse.headers['content-type'] as string) || 'application/octet-stream';
 
           const responseText = await this.commandService.handleFileUpload(
@@ -69,8 +71,8 @@ export class WebhookController {
 
           await this.replyMessage(replyToken, responseText, accessToken);
         } catch (error) {
-          console.error('File download error:', error);
-          await this.replyMessage(replyToken, '❌ ไม่สามารถดาวน์โหลดไฟล์ได้ / Failed to download file', accessToken);
+          console.error('File auto-save error:', error);
+          await this.replyMessage(replyToken, '❌ เก็บไฟล์อัตโนมัติไม่สำเร็จ / Auto-save failed', accessToken);
         }
         continue;
       }
