@@ -20,8 +20,10 @@ export class WebhookController {
     private readonly configService: ConfigService,
     private readonly subscriptionService: SubscriptionService,
   ) {
-    this.channelSecret = this.configService.get<string>('LINE_CHANNEL_SECRET') || '';
-    this.accessToken = this.configService.get<string>('LINE_CHANNEL_ACCESS_TOKEN') || '';
+    this.channelSecret =
+      this.configService.get<string>('LINE_CHANNEL_SECRET') || '';
+    this.accessToken =
+      this.configService.get<string>('LINE_CHANNEL_ACCESS_TOKEN') || '';
   }
 
   @Post()
@@ -130,7 +132,11 @@ export class WebhookController {
   private async handleFileMessage(
     event: any,
     replyToken: string,
-    context: { sourceType: 'user' | 'group'; userId?: string; groupId?: string },
+    context: {
+      sourceType: 'user' | 'group';
+      userId?: string;
+      groupId?: string;
+    },
   ): Promise<void> {
     try {
       const messageId = event.message.id;
@@ -145,28 +151,42 @@ export class WebhookController {
 
       const fileBuffer = Buffer.from(fileResponse.data);
       const extMap: Record<string, string> = {
-        image: 'jpg', video: 'mp4', audio: 'm4a', file: 'bin',
+        image: 'jpg',
+        video: 'mp4',
+        audio: 'm4a',
+        file: 'bin',
       };
       const filename =
         event.message.fileName ||
         `${event.message.type}-${Date.now()}.${extMap[event.message.type] || 'bin'}`;
       const contentType =
-        (fileResponse.headers['content-type'] as string) || 'application/octet-stream';
+        (fileResponse.headers['content-type'] as string) ||
+        'application/octet-stream';
 
       const responseText = await this.commandService.handleFileUpload(
-        fileBuffer, filename, contentType, context,
+        fileBuffer,
+        filename,
+        contentType,
+        context,
       );
       await this.replyMessage(replyToken, responseText);
     } catch (error) {
       console.error('File auto-save error:', error);
-      await this.replyMessage(replyToken, '❌ เก็บไฟล์ไม่สำเร็จ ลองส่งใหม่อีกครั้ง');
+      await this.replyMessage(
+        replyToken,
+        '❌ เก็บไฟล์ไม่สำเร็จ ลองส่งใหม่อีกครั้ง',
+      );
     }
   }
 
   private async handleTextMessage(
     event: any,
     replyToken: string,
-    context: { sourceType: 'user' | 'group'; userId?: string; groupId?: string },
+    context: {
+      sourceType: 'user' | 'group';
+      userId?: string;
+      groupId?: string;
+    },
   ): Promise<void> {
     const userText = event.message.text;
     const orgId = context.groupId || context.userId || 'personal';
@@ -190,7 +210,9 @@ export class WebhookController {
 
       if (!isCommand && !isMentioned) {
         // Save message but don't respond — bot was not addressed
-        console.log(`📝 Group message saved (not addressed): "${userText.substring(0, 50)}"`);
+        console.log(
+          `📝 Group message saved (not addressed): "${userText.substring(0, 50)}"`,
+        );
         return;
       }
     }
@@ -202,7 +224,10 @@ export class WebhookController {
       } else {
         // Check AI quota before calling
         const isGroup = context.sourceType === 'group';
-        const quotaCheck = await this.subscriptionService.checkAiChat(orgId, isGroup);
+        const quotaCheck = await this.subscriptionService.checkAiChat(
+          orgId,
+          isGroup,
+        );
         if (!quotaCheck.allowed) {
           responseText = quotaCheck.message || '⚡ AI ครบโควต้าวันนี้แล้ว';
         } else {
@@ -229,9 +254,7 @@ export class WebhookController {
     if (!mentionees || !Array.isArray(mentionees)) return false;
 
     // Check if any mentionee is the bot (type === 'all' counts as mentioning everyone including bot)
-    return mentionees.some(
-      (m: any) => m.type === 'all' || m.isSelf === true,
-    );
+    return mentionees.some((m: any) => m.type === 'all' || m.isSelf === true);
   }
 
   /**
@@ -266,7 +289,10 @@ export class WebhookController {
       );
     } catch (error) {
       // Log but don't crash — reply tokens expire quickly
-      console.error('LINE reply failed:', (error as any)?.response?.data || (error as Error).message);
+      console.error(
+        'LINE reply failed:',
+        (error as any)?.response?.data || (error as Error).message,
+      );
     }
   }
 }

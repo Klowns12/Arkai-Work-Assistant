@@ -1,4 +1,9 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { StorageProvider } from '../storage.interface';
@@ -23,7 +28,11 @@ export class S3StorageProvider implements StorageProvider {
     this.publicUrl = config.endpoint.replace(/\/+$/, '');
   }
 
-  async upload(key: string, buffer: Buffer, contentType: string): Promise<string> {
+  async upload(
+    key: string,
+    buffer: Buffer,
+    contentType: string,
+  ): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -58,11 +67,16 @@ export class S3StorageProvider implements StorageProvider {
     return `${this.publicUrl}/${this.bucket}/${key}`;
   }
 
-  async getPresignedUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {
+  async getPresignedUrl(
+    key: string,
+    expiresInSeconds: number = 3600,
+  ): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
     });
-    return await getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+    return await getSignedUrl(this.client, command, {
+      expiresIn: expiresInSeconds,
+    });
   }
 }

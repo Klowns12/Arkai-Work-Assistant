@@ -10,10 +10,16 @@ export class OracleStorageProvider implements StorageProvider {
   constructor(config: StorageConfig) {
     // Oracle Cloud Infrastructure (OCI) Object Storage initialization
     // https://docs.oracle.com/en-us/iaas/Content/Object/Concepts/objectstorageoverview.htm
-    throw new Error('Oracle Storage Provider not yet implemented. Use S3/R2 for now.');
+    throw new Error(
+      'Oracle Storage Provider not yet implemented. Use S3/R2 for now.',
+    );
   }
 
-  async upload(key: string, buffer: Buffer, contentType: string): Promise<string> {
+  async upload(
+    key: string,
+    buffer: Buffer,
+    contentType: string,
+  ): Promise<string> {
     throw new Error('Not implemented');
   }
 
@@ -29,7 +35,10 @@ export class OracleStorageProvider implements StorageProvider {
     throw new Error('Not implemented');
   }
 
-  async getPresignedUrl(key: string, expiresInSeconds?: number): Promise<string> {
+  async getPresignedUrl(
+    key: string,
+    expiresInSeconds?: number,
+  ): Promise<string> {
     throw new Error('Not implemented');
   }
 }

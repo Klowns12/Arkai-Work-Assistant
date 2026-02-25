@@ -6,6 +6,7 @@ import { ReminderService } from '../reminder/reminder.service';
 import { AiService } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../subscription/subscription.service';
+import { PaymentService } from '../payment/payment.service';
 
 type CommandHandler = (
   argsText: string,
@@ -26,6 +27,7 @@ export class CommandService {
     private readonly aiService: AiService,
     private readonly prisma: PrismaService,
     private readonly subscriptionService: SubscriptionService,
+    private readonly paymentService: PaymentService,
   ) {
     this.commandMap = new Map<string, CommandHandler>();
     this.registerCommands();
@@ -44,41 +46,50 @@ export class CommandService {
     );
 
     // ─── 2. สรุปแชท / Summary ────────────────────
-    this.registerAliases(
-      ['summary', 'สรุป'],
-      async (_args, orgId, context) => {
-        const isGroup = context?.sourceType === 'group';
-        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'summary_today');
-        if (!check.allowed) return check.message || '⚭ ฟีเจอร์สำหรับแผน Basic ขึ้นไป';
-        return await this.summarizeToday(orgId);
-      },
-    );
+    this.registerAliases(['summary', 'สรุป'], async (_args, orgId, context) => {
+      const isGroup = context?.sourceType === 'group';
+      const check = await this.subscriptionService.canAccessFeature(
+        orgId,
+        isGroup,
+        'summary_today',
+      );
+      if (!check.allowed)
+        return check.message || '⚭ ฟีเจอร์สำหรับแผน Basic ขึ้นไป';
+      return await this.summarizeToday(orgId);
+    });
     this.registerAliases(
       ['yesterday', 'เมื่อวาน'],
       async (_args, orgId, context) => {
         const isGroup = context?.sourceType === 'group';
-        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'summary_yesterday');
-        if (!check.allowed) return check.message || '⚭ ฟีเจอร์สำหรับแผน Pro ขึ้นไป';
+        const check = await this.subscriptionService.canAccessFeature(
+          orgId,
+          isGroup,
+          'summary_yesterday',
+        );
+        if (!check.allowed)
+          return check.message || '⚭ ฟีเจอร์สำหรับแผน Pro ขึ้นไป';
         return await this.summarizeYesterday(orgId);
       },
     );
 
     // ─── 3. งาน / Tasks ──────────────────────────
-    this.registerAliases(
-      ['task', 'งาน'],
-      async (args, orgId, context) => {
-        if (!args) return '📋 วิธีใช้ / Usage:\n/task ส่งรายงานพรุ่งนี้\n/task Submit report by Friday';
-        const isGroup = context?.sourceType === 'group';
-        const check = await this.subscriptionService.checkTaskCreation(orgId, isGroup);
-        if (!check.allowed) return check.message || '📋 สร้างงานครบโควต้า';
-        const result = await this.taskService.createTask(args, orgId);
-        await this.subscriptionService.trackTaskCreation(orgId, isGroup);
-        return result;
-      },
-    );
+    this.registerAliases(['task', 'งาน'], async (args, orgId, context) => {
+      if (!args)
+        return '📋 วิธีใช้ / Usage:\n/task ส่งรายงานพรุ่งนี้\n/task Submit report by Friday';
+      const isGroup = context?.sourceType === 'group';
+      const check = await this.subscriptionService.checkTaskCreation(
+        orgId,
+        isGroup,
+      );
+      if (!check.allowed) return check.message || '📋 สร้างงานครบโควต้า';
+      const result = await this.taskService.createTask(args, orgId);
+      await this.subscriptionService.trackTaskCreation(orgId, isGroup);
+      return result;
+    });
     this.registerAliases(
       ['mytasks', 'งานของฉัน'],
-      async (_args, orgId, context) => await this.taskService.getMyTasks(context?.userId || 'unknown', orgId),
+      async (_args, orgId, context) =>
+        await this.taskService.getMyTasks(context?.userId || 'unknown', orgId),
     );
     this.registerAliases(
       ['alltasks', 'งานทั้งหมด'],
@@ -88,10 +99,16 @@ export class CommandService {
       ['assign', 'มอบหมาย'],
       async (args, orgId, context) => {
         const isGroup = context?.sourceType === 'group';
-        const check = await this.subscriptionService.canAccessFeature(orgId, isGroup, 'assign_task');
-        if (!check.allowed) return check.message || '📋 มอบหมายงาน สำหรับแผน Basic ขึ้นไป';
+        const check = await this.subscriptionService.canAccessFeature(
+          orgId,
+          isGroup,
+          'assign_task',
+        );
+        if (!check.allowed)
+          return check.message || '📋 มอบหมายงาน สำหรับแผน Basic ขึ้นไป';
         const parts = args.split(' ');
-        if (parts.length < 2) return '📋 วิธีใช้ / Usage:\n/assign @ชื่อ งานที่ต้องทำ\n/assign @john finish design';
+        if (parts.length < 2)
+          return '📋 วิธีใช้ / Usage:\n/assign @ชื่อ งานที่ต้องทำ\n/assign @john finish design';
         const user = parts[0].replace('@', '');
         const desc = parts.slice(1).join(' ');
         return await this.taskService.assignTask(user, desc, orgId);
@@ -111,19 +128,38 @@ export class CommandService {
     // ─── 5. เตือน / Remind ───────────────────────
     this.registerAliases(
       ['remind', 'เตือน'],
-      async (args, orgId) => await this.reminderService.setReminderTomorrow(args, orgId),
+      async (args, orgId) =>
+        await this.reminderService.setReminderTomorrow(args, orgId),
     );
 
     // ─── 6. ระบบ / System ────────────────────────
-    this.registerAliases(
-      ['help', 'วิธีใช้', 'menu'],
-      () => this.help(),
-    );
+    this.registerAliases(['help', 'วิธีใช้', 'menu'], () => this.help());
     this.registerAliases(
       ['plan', 'แผน', 'สมัคร'],
       async (_args, orgId, context) => {
         const isGroup = context?.sourceType === 'group';
         return await this.subscriptionService.getPlanStatus(orgId, isGroup);
+      },
+    );
+    this.registerAliases(
+      ['upgrade', 'อัพเกรด'],
+      async (args, orgId, context) => {
+        const isGroup = context?.sourceType === 'group';
+        const parts = args.toLowerCase().split(' ');
+        const plan = parts[0];
+        const period =
+          parts[1] === 'yearly' || parts[1] === 'ปี' ? 'yearly' : 'monthly';
+
+        if (!['basic', 'pro', 'business'].includes(plan)) {
+          return '💡 วิธีอัพเกรด (พิมพ์คำสั่ง):\n/upgrade basic\n/upgrade pro\n/upgrade business\n/upgrade business yearly (รายปี)';
+        }
+
+        return await this.paymentService.getUpgradeMessage(
+          orgId,
+          isGroup,
+          plan,
+          period,
+        );
       },
     );
   }
@@ -136,7 +172,11 @@ export class CommandService {
 
   async handle(
     text: string,
-    context?: { sourceType: 'user' | 'group'; userId?: string; groupId?: string },
+    context?: {
+      sourceType: 'user' | 'group';
+      userId?: string;
+      groupId?: string;
+    },
   ): Promise<string> {
     const normalizedText = text.trim();
     const orgId = context?.groupId || context?.userId || 'personal';
@@ -165,14 +205,22 @@ export class CommandService {
     fileBuffer: Buffer,
     filename: string,
     contentType: string,
-    context: { sourceType: 'user' | 'group'; userId?: string; groupId?: string },
+    context: {
+      sourceType: 'user' | 'group';
+      userId?: string;
+      groupId?: string;
+    },
   ): Promise<string> {
     const orgId = context.groupId || context.userId || 'personal';
 
     try {
       await this.storageQuotaService.checkQuota(orgId, fileBuffer.length);
       const key = this.storageService.generateKey(orgId, filename);
-      const url = await this.storageService.uploadFile(key, fileBuffer, contentType);
+      const url = await this.storageService.uploadFile(
+        key,
+        fileBuffer,
+        contentType,
+      );
       await this.storageQuotaService.trackUpload(orgId, fileBuffer.length);
 
       await this.prisma.file.create({
@@ -210,19 +258,28 @@ export class CommandService {
         take: 10,
       });
 
-      if (files.length === 0) return '📂 ยังไม่มีไฟล์\nส่งไฟล์/รูปเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ!';
+      if (files.length === 0)
+        return '📂 ยังไม่มีไฟล์\nส่งไฟล์/รูปเข้ามาในแชทได้เลย ระบบจะเก็บให้อัตโนมัติ!';
 
       const results: string[] = [];
       for (const f of files) {
         try {
-          const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
+          const tempUrl = await this.storageService.getPresignedUrl(
+            f.storageKey,
+            3600,
+          );
           const ext = f.filename.split('.').pop()?.toUpperCase() || 'FILE';
-          results.push(`${this.fileIcon(ext)} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+          results.push(
+            `${this.fileIcon(ext)} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`,
+          );
         } catch {
           results.push(`📄 ${f.filename} (ลิงก์ไม่พร้อม)`);
         }
       }
-      return `📂 ไฟล์ทั้งหมด (${files.length} ล่าสุด):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+      return (
+        `📂 ไฟล์ทั้งหมด (${files.length} ล่าสุด):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` +
+        results.join('\n\n')
+      );
     } catch (error) {
       console.error('getRecentFiles error:', error);
       return '❌ โหลดรายการไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง';
@@ -247,13 +304,21 @@ export class CommandService {
       const results: string[] = [];
       for (const f of files) {
         try {
-          const tempUrl = await this.storageService.getPresignedUrl(f.storageKey, 3600);
-          results.push(`${this.fileIcon(cleanExt.toUpperCase())} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`);
+          const tempUrl = await this.storageService.getPresignedUrl(
+            f.storageKey,
+            3600,
+          );
+          results.push(
+            `${this.fileIcon(cleanExt.toUpperCase())} ${f.filename}\n   📦 ${(f.sizeBytes / 1024).toFixed(1)} KB | 📅 ${f.createdAt.toLocaleDateString('th-TH')}\n   🔗 ${tempUrl}`,
+          );
         } catch {
           results.push(`📄 ${f.filename} (ลิงก์ไม่พร้อม)`);
         }
       }
-      return `📁 ไฟล์ .${cleanExt} (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` + results.join('\n\n');
+      return (
+        `📁 ไฟล์ .${cleanExt} (${files.length}):\n⏳ ลิงก์ใช้ได้ 1 ชม.\n\n` +
+        results.join('\n\n')
+      );
     } catch (error) {
       console.error('filesByType error:', error);
       return '❌ โหลดรายการไฟล์ไม่สำเร็จ ลองใหม่อีกครั้ง';
@@ -262,10 +327,25 @@ export class CommandService {
 
   private fileIcon(ext: string): string {
     const icons: Record<string, string> = {
-      PDF: '📕', DOC: '📘', DOCX: '📘', XLS: '📗', XLSX: '📗',
-      PPT: '📙', PPTX: '📙', JPG: '🖼️', JPEG: '🖼️', PNG: '🖼️',
-      GIF: '🖼️', MP4: '🎬', MOV: '🎬', MP3: '🎵', M4A: '🎵',
-      ZIP: '📦', RAR: '📦', TXT: '📝', CSV: '📊',
+      PDF: '📕',
+      DOC: '📘',
+      DOCX: '📘',
+      XLS: '📗',
+      XLSX: '📗',
+      PPT: '📙',
+      PPTX: '📙',
+      JPG: '🖼️',
+      JPEG: '🖼️',
+      PNG: '🖼️',
+      GIF: '🖼️',
+      MP4: '🎬',
+      MOV: '🎬',
+      MP3: '🎵',
+      M4A: '🎵',
+      ZIP: '📦',
+      RAR: '📦',
+      TXT: '📝',
+      CSV: '📊',
     };
     return icons[ext] || '📄';
   }

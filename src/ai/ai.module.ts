@@ -3,7 +3,7 @@ import { AiService } from './ai.service';
 
 @Global()
 @Module({
-    providers: [AiService],
-    exports: [AiService],
+  providers: [AiService],
+  exports: [AiService],
 })
-export class AiModule { }
+export class AiModule {}

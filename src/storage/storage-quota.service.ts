@@ -44,9 +44,14 @@ export class StorageQuotaService {
 
     // Check alert threshold
     const usageRatio = Number(usage.used_bytes) / Number(usage.quota_bytes);
-    if (usageRatio >= STORAGE_ALERT_THRESHOLD && usageRatio < STORAGE_BLOCK_THRESHOLD) {
+    if (
+      usageRatio >= STORAGE_ALERT_THRESHOLD &&
+      usageRatio < STORAGE_BLOCK_THRESHOLD
+    ) {
       // TODO: Send alert to admin
-      console.warn(`[STORAGE ALERT] Org ${organizationId} at ${(usageRatio * 100).toFixed(1)}%`);
+      console.warn(
+        `[STORAGE ALERT] Org ${organizationId} at ${(usageRatio * 100).toFixed(1)}%`,
+      );
     }
   }
 

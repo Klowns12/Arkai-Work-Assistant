@@ -9,8 +9,15 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AiModule } from '../ai/ai.module';
 
 @Module({
-  imports: [StorageModule, TaskModule, MemoryModule, ReminderModule, PrismaModule, AiModule],
+  imports: [
+    StorageModule,
+    TaskModule,
+    MemoryModule,
+    ReminderModule,
+    PrismaModule,
+    AiModule,
+  ],
   controllers: [WebhookController],
   providers: [CommandService],
 })
-export class WebhookModule { }
+export class WebhookModule {}

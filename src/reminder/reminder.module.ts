@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ReminderService } from './reminder.service';
 
 @Module({
-    providers: [ReminderService],
-    exports: [ReminderService]
+  providers: [ReminderService],
+  exports: [ReminderService],
 })
-export class ReminderModule { }
+export class ReminderModule {}

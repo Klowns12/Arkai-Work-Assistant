@@ -23,7 +23,9 @@ export class AiService {
     const preview = lines.slice(-15); // Show last 15 messages
 
     let result = `📋 สรุปแชท (${total} ข้อความ):\n\n`;
-    result += preview.map((line, i) => `${i + 1}. ${line.substring(0, 100)}`).join('\n');
+    result += preview
+      .map((line, i) => `${i + 1}. ${line.substring(0, 100)}`)
+      .join('\n');
 
     if (total > 15) {
       result += `\n\n... และอีก ${total - 15} ข้อความก่อนหน้า`;
@@ -37,15 +39,16 @@ export class AiService {
    * Simple parser: detect "พรุ่งนี้/tomorrow/มะรืน" for due date,
    * use the full text as title (capped at 80 chars).
    */
-  extractTask(text: string): { title: string; description?: string; dueDate?: Date } {
+  extractTask(text: string): {
+    title: string;
+    description?: string;
+    dueDate?: Date;
+  } {
     const lowerText = text.toLowerCase();
     let dueDate: Date | undefined;
 
     // Detect due date from Thai/English keywords
-    if (
-      lowerText.includes('พรุ่งนี้') ||
-      lowerText.includes('tomorrow')
-    ) {
+    if (lowerText.includes('พรุ่งนี้') || lowerText.includes('tomorrow')) {
       dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 1);
       dueDate.setHours(9, 0, 0, 0);
@@ -56,7 +59,10 @@ export class AiService {
       dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 2);
       dueDate.setHours(9, 0, 0, 0);
-    } else if (lowerText.includes('สัปดาห์หน้า') || lowerText.includes('next week')) {
+    } else if (
+      lowerText.includes('สัปดาห์หน้า') ||
+      lowerText.includes('next week')
+    ) {
       dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 7);
       dueDate.setHours(9, 0, 0, 0);
@@ -64,7 +70,10 @@ export class AiService {
 
     // Clean title: remove date keywords
     let title = text
-      .replace(/พรุ่งนี้|tomorrow|มะรืน|day after tomorrow|สัปดาห์หน้า|next week/gi, '')
+      .replace(
+        /พรุ่งนี้|tomorrow|มะรืน|day after tomorrow|สัปดาห์หน้า|next week/gi,
+        '',
+      )
       .trim();
 
     if (!title) title = text;
@@ -85,7 +94,16 @@ export class AiService {
     const lowerText = text.toLowerCase();
 
     // Greeting
-    if (this.matchesAny(lowerText, ['สวัสดี', 'หวัดดี', 'hello', 'hi', 'hey', 'ดี'])) {
+    if (
+      this.matchesAny(lowerText, [
+        'สวัสดี',
+        'หวัดดี',
+        'hello',
+        'hi',
+        'hey',
+        'ดี',
+      ])
+    ) {
       return '👋 สวัสดีครับ! ผม Arkai ผู้ช่วยทำงานของคุณ\n\nพิมพ์ /help เพื่อดูคำสั่งทั้งหมด 📚';
     }
 
@@ -100,7 +118,9 @@ export class AiService {
     }
 
     // Ask about files
-    if (this.matchesAny(lowerText, ['ไฟล์', 'file', 'รูป', 'เอกสาร', 'document'])) {
+    if (
+      this.matchesAny(lowerText, ['ไฟล์', 'file', 'รูป', 'เอกสาร', 'document'])
+    ) {
       return '📁 จัดการไฟล์:\n• ส่งไฟล์/รูปเข้ามา → เก็บอัตโนมัติ\n• /files — ดูไฟล์ทั้งหมด\n• /file pdf — ดูเฉพาะ PDF';
     }
 
@@ -115,17 +135,37 @@ export class AiService {
     }
 
     // Ask about notes/memory
-    if (this.matchesAny(lowerText, ['จำ', 'บันทึก', 'note', 'remember', 'จด'])) {
+    if (
+      this.matchesAny(lowerText, ['จำ', 'บันทึก', 'note', 'remember', 'จด'])
+    ) {
       return '🧠 บันทึกความจำ:\n• /note [ข้อความ] — บันทึก\n• /agreements — ดูข้อตกลง';
     }
 
     // Ask about plan/pricing
-    if (this.matchesAny(lowerText, ['ราคา', 'price', 'แพ็ค', 'plan', 'upgrade', 'อัพเกรด'])) {
+    if (
+      this.matchesAny(lowerText, [
+        'ราคา',
+        'price',
+        'แพ็ค',
+        'plan',
+        'upgrade',
+        'อัพเกรด',
+      ])
+    ) {
       return '📊 ดูแผน/ราคา:\n• /plan — ดูแผนปัจจุบันและอัพเกรด';
     }
 
     // How to use / help
-    if (this.matchesAny(lowerText, ['ใช้ยังไง', 'วิธีใช้', 'how', 'help', 'ช่วย', 'ทำอะไรได้'])) {
+    if (
+      this.matchesAny(lowerText, [
+        'ใช้ยังไง',
+        'วิธีใช้',
+        'how',
+        'help',
+        'ช่วย',
+        'ทำอะไรได้',
+      ])
+    ) {
       return 'พิมพ์ /help เพื่อดูคำสั่งทั้งหมด 📚';
     }
 

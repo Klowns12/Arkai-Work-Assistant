@@ -10,7 +10,8 @@ export class StorageService {
 
   constructor() {
     this.config = {
-      provider: (process.env.STORAGE_PROVIDER as 'r2' | 's3' | 'oracle') || 'r2',
+      provider:
+        (process.env.STORAGE_PROVIDER as 'r2' | 's3' | 'oracle') || 'r2',
       endpoint: process.env.STORAGE_ENDPOINT || '',
       region: process.env.STORAGE_REGION || 'auto',
       bucket: process.env.STORAGE_BUCKET || '',
@@ -33,7 +34,11 @@ export class StorageService {
     }
   }
 
-  async uploadFile(key: string, buffer: Buffer, contentType: string): Promise<string> {
+  async uploadFile(
+    key: string,
+    buffer: Buffer,
+    contentType: string,
+  ): Promise<string> {
     return this.provider.upload(key, buffer, contentType);
   }
 
@@ -49,7 +54,10 @@ export class StorageService {
     return this.provider.getUrl(key);
   }
 
-  async getPresignedUrl(key: string, expiresInSeconds: number = 3600): Promise<string> {
+  async getPresignedUrl(
+    key: string,
+    expiresInSeconds: number = 3600,
+  ): Promise<string> {
     return this.provider.getPresignedUrl(key, expiresInSeconds);
   }
 
