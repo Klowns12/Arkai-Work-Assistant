@@ -67,10 +67,48 @@ export class WebhookController {
   }
 
   private async processEvent(event: any): Promise<void> {
-    const replyToken = event.replyToken;
-    if (!replyToken) return; // Skip events without replyToken (e.g., leave events)
+    // Log every incoming event for debugging
+    console.log(
+      `📨 Event: type=${event.type}, source=${event.source?.type}, userId=${event.source?.userId}, groupId=${event.source?.groupId}`,
+    );
 
-    const sourceType = event.source?.type as 'user' | 'group' || 'user';
+    const replyToken = event.replyToken;
+
+    // ── Handle join event (bot added to a group) ──
+    if (event.type === 'join' && replyToken) {
+      const greeting = `🎉 สวัสดีครับ! ผม Arkai ผู้ช่วยทำงานอัจฉริยะ!
+
+ผมช่วยได้เรื่อง:
+📁 เก็บไฟล์ — ส่งไฟล์/รูปมา ระบบเก็บให้อัตโนมัติ
+✅ จัดการงาน — /task, /assign, /mytasks
+📝 สรุปแชท — /summary
+🧠 บันทึกความจำ — /note
+⏰ เตือนความจำ — /remind
+
+💡 ใช้คำสั่ง / หรือ @mention ผมในกลุ่มได้เลย!
+พิมพ์ /help เพื่อดูคำสั่งทั้งหมด 📚`;
+      await this.replyMessage(replyToken, greeting);
+      return;
+    }
+
+    // ── Handle follow event (someone adds bot as friend) ──
+    if (event.type === 'follow' && replyToken) {
+      const welcome = `👋 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อน Arkai!
+
+ผม Arkai ผู้ช่วยทำงานอัจฉริยะ ช่วยได้เรื่อง:
+📁 เก็บไฟล์ • ✅ จัดการงาน • 📝 สรุปแชท
+🧠 บันทึกความจำ • ⏰ เตือนความจำ
+
+พิมพ์ /help เพื่อเริ่มต้นใช้งาน 📚
+หรือพิมพ์อะไรก็ได้ ผมจะช่วยแนะนำครับ!`;
+      await this.replyMessage(replyToken, welcome);
+      return;
+    }
+
+    // Skip events without replyToken (e.g., leave, unfollow)
+    if (!replyToken) return;
+
+    const sourceType = (event.source?.type as 'user' | 'group') || 'user';
     const userId = event.source?.userId;
     const groupId = event.source?.groupId;
     const context = { sourceType, userId, groupId };
@@ -144,6 +182,19 @@ export class WebhookController {
       })
       .catch((err) => console.error('Failed to save message:', err));
 
+    // ── Group mention detection ──
+    // In groups: only respond to / commands or when bot is @mentioned
+    if (context.sourceType === 'group') {
+      const isCommand = userText.trim().startsWith('/');
+      const isMentioned = this.isBotMentioned(event);
+
+      if (!isCommand && !isMentioned) {
+        // Save message but don't respond — bot was not addressed
+        console.log(`📝 Group message saved (not addressed): "${userText.substring(0, 50)}"`);
+        return;
+      }
+    }
+
     let responseText: string;
     try {
       if (userText.startsWith('/')) {
@@ -155,7 +206,9 @@ export class WebhookController {
         if (!quotaCheck.allowed) {
           responseText = quotaCheck.message || '⚡ AI ครบโควต้าวันนี้แล้ว';
         } else {
-          responseText = await this.aiService.chat(userText);
+          // Strip @mention from text before processing
+          const cleanText = this.stripMention(userText);
+          responseText = await this.aiService.chat(cleanText);
           await this.subscriptionService.trackAiChat(orgId, isGroup);
         }
       }
@@ -165,6 +218,28 @@ export class WebhookController {
     }
 
     await this.replyMessage(replyToken, responseText);
+  }
+
+  /**
+   * Check if the bot was @mentioned in a LINE group message.
+   * LINE sends mention data in event.message.mention.mentionees
+   */
+  private isBotMentioned(event: any): boolean {
+    const mentionees = event.message?.mention?.mentionees;
+    if (!mentionees || !Array.isArray(mentionees)) return false;
+
+    // Check if any mentionee is the bot (type === 'all' counts as mentioning everyone including bot)
+    return mentionees.some(
+      (m: any) => m.type === 'all' || m.isSelf === true,
+    );
+  }
+
+  /**
+   * Remove @mention text from the message so it doesn't confuse the response logic.
+   */
+  private stripMention(text: string): string {
+    // Remove @xxx patterns at the start of the message
+    return text.replace(/^@\S+\s*/, '').trim() || text;
   }
 
   private async replyMessage(replyToken: string, text: string): Promise<void> {

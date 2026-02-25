@@ -55,19 +55,20 @@ type PlanType = keyof typeof PLAN_LIMITS;
 export class SubscriptionService {
     constructor(private prisma: PrismaService) { }
 
-    // Get or create organization for this orgId
     async getOrCreateOrg(orgId: string, isGroup: boolean): Promise<{ id: string; plan: PlanType }> {
         try {
-            const where = isGroup ? { lineGroupId: orgId } : { lineUserId: orgId };
-
-            let org = await this.prisma.organization.findFirst({ where });
-
-            if (!org) {
-                org = await this.prisma.organization.create({
-                    data: {
-                        ...(isGroup ? { lineGroupId: orgId } : { lineUserId: orgId }),
-                        plan: 'free',
-                    },
+            let org;
+            if (isGroup) {
+                org = await this.prisma.organization.upsert({
+                    where: { lineGroupId: orgId },
+                    update: {},
+                    create: { lineGroupId: orgId, plan: 'free' },
+                });
+            } else {
+                org = await this.prisma.organization.upsert({
+                    where: { lineUserId: orgId },
+                    update: {},
+                    create: { lineUserId: orgId, plan: 'free' },
                 });
             }
 
@@ -82,7 +83,14 @@ export class SubscriptionService {
             return { id: org.id, plan: org.plan as PlanType };
         } catch (error) {
             console.error('getOrCreateOrg error:', error);
-            return { id: orgId, plan: 'free' };
+            try {
+                const where = isGroup ? { lineGroupId: orgId } : { lineUserId: orgId };
+                const existing = await this.prisma.organization.findFirst({ where });
+                if (existing) return { id: existing.id, plan: existing.plan as PlanType };
+            } catch (e) { }
+
+            // Return a dummy UUID to prevent Prisma findUnique crashes downstream
+            return { id: '00000000-0000-0000-0000-000000000000', plan: 'free' };
         }
     }
 

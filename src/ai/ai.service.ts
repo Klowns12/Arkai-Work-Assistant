@@ -1,92 +1,139 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const MODEL = 'gemini-2.0-flash-lite';
-
+/**
+ * Rule-based AI Service — no external API required.
+ * Provides keyword-matching chat, simple text summarization,
+ * and basic task extraction from natural language.
+ */
 @Injectable()
 export class AiService {
-  private genAI: GoogleGenerativeAI;
-  private apiKey: string;
+  /**
+   * Summarize messages by showing count + latest messages.
+   * No AI — just formats the raw text.
+   */
+  summarizeText(text: string): string {
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
 
-  constructor(private configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('GEMINI_API_KEY') || '';
-    this.genAI = new GoogleGenerativeAI(this.apiKey);
+    if (lines.length === 0) return '📭 ไม่มีข้อความให้สรุป';
+
+    const total = lines.length;
+    const preview = lines.slice(-15); // Show last 15 messages
+
+    let result = `📋 สรุปแชท (${total} ข้อความ):\n\n`;
+    result += preview.map((line, i) => `${i + 1}. ${line.substring(0, 100)}`).join('\n');
+
+    if (total > 15) {
+      result += `\n\n... และอีก ${total - 15} ข้อความก่อนหน้า`;
+    }
+
+    return result;
   }
 
-  private handleError(error: unknown): string {
-    const msg = (error as Error).message || '';
-    if (msg.includes('429') || msg.includes('quota')) {
-      return '⏳ AI กำลังพักครู่ (โควต้าเต็มชั่วคราว)\nลองใหม่ในอีก 1-2 นาทีนะครับ';
+  /**
+   * Extract task info from natural text.
+   * Simple parser: detect "พรุ่งนี้/tomorrow/มะรืน" for due date,
+   * use the full text as title (capped at 80 chars).
+   */
+  extractTask(text: string): { title: string; description?: string; dueDate?: Date } {
+    const lowerText = text.toLowerCase();
+    let dueDate: Date | undefined;
+
+    // Detect due date from Thai/English keywords
+    if (
+      lowerText.includes('พรุ่งนี้') ||
+      lowerText.includes('tomorrow')
+    ) {
+      dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 1);
+      dueDate.setHours(9, 0, 0, 0);
+    } else if (
+      lowerText.includes('มะรืน') ||
+      lowerText.includes('day after tomorrow')
+    ) {
+      dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 2);
+      dueDate.setHours(9, 0, 0, 0);
+    } else if (lowerText.includes('สัปดาห์หน้า') || lowerText.includes('next week')) {
+      dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 7);
+      dueDate.setHours(9, 0, 0, 0);
     }
-    if (msg.includes('API key')) {
-      return '⚠️ GEMINI_API_KEY ไม่ถูกต้อง';
-    }
-    console.error('AI Error:', error);
-    return '❌ AI มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะครับ';
+
+    // Clean title: remove date keywords
+    let title = text
+      .replace(/พรุ่งนี้|tomorrow|มะรืน|day after tomorrow|สัปดาห์หน้า|next week/gi, '')
+      .trim();
+
+    if (!title) title = text;
+    title = title.substring(0, 80);
+
+    return {
+      title,
+      description: text.length > 80 ? text : undefined,
+      dueDate,
+    };
   }
 
-  async summarizeText(text: string): Promise<string> {
-    if (!this.apiKey) {
-      return '⚠️ ยังไม่ได้ตั้งค่า AI (GEMINI_API_KEY)';
+  /**
+   * Rule-based chat response.
+   * Matches keywords and returns helpful responses + command suggestions.
+   */
+  chat(text: string): string {
+    const lowerText = text.toLowerCase();
+
+    // Greeting
+    if (this.matchesAny(lowerText, ['สวัสดี', 'หวัดดี', 'hello', 'hi', 'hey', 'ดี'])) {
+      return '👋 สวัสดีครับ! ผม Arkai ผู้ช่วยทำงานของคุณ\n\nพิมพ์ /help เพื่อดูคำสั่งทั้งหมด 📚';
     }
-    const model = this.genAI.getGenerativeModel({ model: MODEL });
-    const prompt = `สรุปข้อความต่อไปนี้แบบสั้น กระชับ เป็นภาษาไทย ใช้ emoji ให้อ่านง่าย ถ้ามีงานหรือ action items ให้แยกออกมาเป็นรายการด้วย:\n\n${text}`;
-    try {
-      const result = await model.generateContent(prompt);
-      return `📋 สรุป:\n${result.response.text()}`;
-    } catch (error) {
-      return this.handleError(error);
+
+    // Thanks
+    if (this.matchesAny(lowerText, ['ขอบคุณ', 'thank', 'thanks', 'thx'])) {
+      return '😊 ยินดีครับ! มีอะไรให้ช่วยอีกก็บอกได้เลยนะ';
     }
+
+    // Ask about tasks
+    if (this.matchesAny(lowerText, ['งาน', 'task', 'todo', 'ต้องทำ'])) {
+      return '✅ จัดการงานได้ด้วยคำสั่ง:\n• /task [รายละเอียด] — สร้างงาน\n• /mytasks — ดูงานของคุณ\n• /alltasks — ดูงานทั้งหมด';
+    }
+
+    // Ask about files
+    if (this.matchesAny(lowerText, ['ไฟล์', 'file', 'รูป', 'เอกสาร', 'document'])) {
+      return '📁 จัดการไฟล์:\n• ส่งไฟล์/รูปเข้ามา → เก็บอัตโนมัติ\n• /files — ดูไฟล์ทั้งหมด\n• /file pdf — ดูเฉพาะ PDF';
+    }
+
+    // Ask about summary
+    if (this.matchesAny(lowerText, ['สรุป', 'summary', 'recap'])) {
+      return '📝 สรุปแชท:\n• /summary — สรุปแชทวันนี้\n• /yesterday — สรุปเมื่อวาน';
+    }
+
+    // Ask about reminders
+    if (this.matchesAny(lowerText, ['เตือน', 'remind', 'alarm', 'นัด'])) {
+      return '⏰ ตั้งเตือน:\n• /remind [เรื่อง] — เตือนพรุ่งนี้ 09:00';
+    }
+
+    // Ask about notes/memory
+    if (this.matchesAny(lowerText, ['จำ', 'บันทึก', 'note', 'remember', 'จด'])) {
+      return '🧠 บันทึกความจำ:\n• /note [ข้อความ] — บันทึก\n• /agreements — ดูข้อตกลง';
+    }
+
+    // Ask about plan/pricing
+    if (this.matchesAny(lowerText, ['ราคา', 'price', 'แพ็ค', 'plan', 'upgrade', 'อัพเกรด'])) {
+      return '📊 ดูแผน/ราคา:\n• /plan — ดูแผนปัจจุบันและอัพเกรด';
+    }
+
+    // How to use / help
+    if (this.matchesAny(lowerText, ['ใช้ยังไง', 'วิธีใช้', 'how', 'help', 'ช่วย', 'ทำอะไรได้'])) {
+      return 'พิมพ์ /help เพื่อดูคำสั่งทั้งหมด 📚';
+    }
+
+    // Default response
+    return `💬 ผม Arkai ผู้ช่วยทำงานครับ!\n\nผมช่วยได้เรื่อง:\n📁 เก็บไฟล์ • ✅ จัดการงาน • 📝 สรุปแชท\n🧠 บันทึกความจำ • ⏰ เตือนความจำ\n\nพิมพ์ /help เพื่อดูคำสั่งทั้งหมด`;
   }
 
-  async extractTask(text: string): Promise<{ title: string; description?: string; dueDate?: Date }> {
-    if (!this.apiKey) {
-      return { title: text.substring(0, 50) };
-    }
-    const model = this.genAI.getGenerativeModel({ model: MODEL });
-    const today = new Date().toISOString().split('T')[0];
-    const prompt = `วิเคราะห์ข้อความต่อไปนี้แล้วดึงข้อมูลเพื่อสร้างงาน (Task)
-    วันนี้คือ: ${today}
-    ข้อความ: "${text}"
-    ตอบกลับในรูปแบบ JSON เท่านั้น ห้ามตอบอย่างอื่น:
-    { "title": "ชื่องานสั้นๆ ไม่เกิน 50 ตัวอักษร", "description": "รายละเอียด (ถ้ามี หรือ null)", "dueDate": "วันที่กำหนดส่ง ISO8601 เช่น 2024-05-20T10:00:00Z (ถ้ามี หรือ null)" }
-    ถ้ามีคำว่า "พรุ่งนี้" หรือ "tomorrow" ให้คำนวณวันพรุ่งนี้จากวันนี้
-    ถ้ามีคำว่า "มะรืน" หรือ "day after tomorrow" ให้คำนวณวันมะรืนจากวันนี้`;
-
-    try {
-      const result = await model.generateContent(prompt);
-      let resText = result.response.text().trim();
-      resText = resText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(resText);
-      return {
-        title: parsed.title || text.substring(0, 50),
-        description: parsed.description || undefined,
-        dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-      };
-    } catch (error) {
-      console.error('AI Extract Task Error:', error);
-      return { title: text.substring(0, 50) };
-    }
-  }
-
-  async chat(text: string): Promise<string> {
-    if (!this.apiKey) {
-      return '⚠️ ยังไม่ได้ตั้งค่า AI (GEMINI_API_KEY)';
-    }
-    const model = this.genAI.getGenerativeModel({ model: MODEL });
-    const prompt = `คุณคือ Arkai ผู้ช่วยทำงานอัจฉริยะที่สุภาพ เป็นมิตร และเป็นมืออาชีพ
-ตอบคำถามหรือสนทนาในเรื่องทั่วไป ให้ตอบสั้นกระชับ ไม่เกิน 3-5 บรรทัด
-ถ้าผู้ใช้ถามเป็นภาษาไทยให้ตอบเป็นไทย ถ้าถามเป็นอังกฤษให้ตอบเป็นอังกฤษ
-ถ้าผู้ใช้ต้องการใช้ฟีเจอร์เฉพาะให้แนะนำคำสั่ง / ที่เกี่ยวข้อง
-
-ข้อความจากผู้ใช้: ${text}`;
-
-    try {
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    } catch (error) {
-      return this.handleError(error);
-    }
+  private matchesAny(text: string, keywords: string[]): boolean {
+    return keywords.some((kw) => text.includes(kw));
   }
 }
