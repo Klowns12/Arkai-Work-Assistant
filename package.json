@@ -31,11 +31,11 @@
     "@prisma/client": "^7.4.1",
     "axios": "^1.13.5",
     "dotenv": "^17.3.1",
+    "omise": "^1.1.0",
     "pg": "^8.18.0",
     "prisma": "^7.4.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
-    "stripe": "^20.3.1"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import Stripe from 'stripe';
 import axios from 'axios';
+const omise = require('omise');
 
-// Stripe price config per plan (in satang → THB for Stripe)
 const PLAN_PRICES: Record<
   string,
   { monthly: number; yearly: number; label: string }
@@ -16,50 +15,100 @@ const PLAN_PRICES: Record<
 
 @Injectable()
 export class PaymentService {
-  private stripe: Stripe | null = null;
-  private webhookSecret: string;
+  private omiseClient: any = null;
   private accessToken: string;
+  private publicKey: string;
 
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
   ) {
-    const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
-    if (secretKey) {
-      this.stripe = new Stripe(secretKey);
+    const secretKey = this.configService.get<string>('OMISE_SECRET_KEY');
+    this.publicKey =
+      this.configService.get<string>('OMISE_PUBLISHABLE_KEY') || '';
+
+    if (secretKey && this.publicKey && secretKey !== 'skey_test_placeholder') {
+      this.omiseClient = omise({
+        publicKey: this.publicKey,
+        secretKey: secretKey,
+        omiseVersion: '2019-05-29',
+      });
     }
-    this.webhookSecret =
-      this.configService.get<string>('STRIPE_WEBHOOK_SECRET') || '';
+
     this.accessToken =
       this.configService.get<string>('LINE_CHANNEL_ACCESS_TOKEN') || '';
   }
 
-  // ═══════════════════════════════════════════════
-  // Create Stripe Checkout Session
-  // ═══════════════════════════════════════════════
-  async createCheckoutSession(
+  getOmisePublicKey(): string {
+    return this.publicKey;
+  }
+
+  // Generate /upgrade response message
+  async getUpgradeMessage(
     orgId: string,
     isGroup: boolean,
     plan: string,
     period: string,
-  ): Promise<{ url: string } | { error: string }> {
+  ): Promise<string> {
+    if (!this.omiseClient) {
+      return '❌ ระบบชำระเงินยังไม่พร้อม กรุณาติดต่อแอดมิน';
+    }
+
+    const planConfig = PLAN_PRICES[plan];
+    if (!planConfig) return '❌ แผนไม่ถูกต้อง';
+
+    const baseUrl =
+      this.configService.get<string>('APP_URL') ||
+      'https://arkai-work-assistant.onrender.com';
+
+    // Encode parameters for the checkout URL
+    const params = new URLSearchParams({
+      orgId,
+      isGroup: isGroup ? 'true' : 'false',
+      plan,
+      period,
+    });
+
+    const checkoutUrl = `${baseUrl}/payment/checkout?${params.toString()}`;
+
+    const amount = period === 'yearly' ? planConfig.yearly : planConfig.monthly;
+    const periodLabel = period === 'yearly' ? 'รายปี' : 'รายเดือน';
+
+    return `💳 ชำระเงินอัพเกรด ${planConfig.label}
+
+💰 ราคา: ฿${amount} (${periodLabel})
+🔗 กดลิงก์ด้านล่างเพื่อชำระเงิน:
+${checkoutUrl}
+
+✅ รองรับ: บัตรเครดิต/เดบิต, พร้อมเพย์, TrueMoney
+🔒 ชำระเงินผ่าน Omise (ปลอดภัย 100%)`;
+  }
+
+  getPlanAmount(plan: string, period: string): number {
+    const planConfig = PLAN_PRICES[plan];
+    if (!planConfig) return 0;
+    return period === 'yearly'
+      ? planConfig.yearly * 100
+      : planConfig.monthly * 100; // Omise expects satangs/cents
+  }
+
+  async processCharge(
+    orgId: string,
+    isGroup: boolean,
+    plan: string,
+    period: string,
+    omiseToken?: string,
+    omiseSource?: string,
+  ): Promise<{ redirectUrl: string } | { error: string }> {
     try {
-      if (!this.stripe) {
-        return { error: '❌ ระบบชำระเงินยังไม่พร้อม กรุณาติดต่อแอดมิน' };
+      if (!this.omiseClient) {
+        return { error: 'Omise client not configured' };
       }
 
-      const planConfig = PLAN_PRICES[plan];
-      if (!planConfig) {
-        return {
-          error: `❌ แผนไม่ถูกต้อง กรุณาเลือก: basic, pro, business`,
-        };
-      }
+      const amount = this.getPlanAmount(plan, period);
+      if (amount <= 0) return { error: 'Invalid plan' };
 
-      const amount =
-        period === 'yearly' ? planConfig.yearly : planConfig.monthly;
-      const periodLabel = period === 'yearly' ? 'รายปี' : 'รายเดือน';
-
-      // Find or create org to get the internal org ID
+      // Find or create internal org ID
       let org;
       if (isGroup) {
         org = await this.prisma.organization.findFirst({
@@ -70,32 +119,18 @@ export class PaymentService {
           where: { lineUserId: orgId },
         });
       }
-
       const internalOrgId = org?.id || orgId;
 
-      // Determine success/cancel URL (Render URL)
       const baseUrl =
         this.configService.get<string>('APP_URL') ||
         'https://arkai-work-assistant.onrender.com';
+      const returnUri = `${baseUrl}/payment/complete`;
 
-      const session = await this.stripe.checkout.sessions.create({
-        payment_method_types: ['card', 'promptpay'],
-        line_items: [
-          {
-            price_data: {
-              currency: 'thb',
-              product_data: {
-                name: `Arkai ${planConfig.label} — ${periodLabel}`,
-                description: `อัพเกรด Arkai Work Assistant เป็นแผน ${planConfig.label}`,
-              },
-              unit_amount: amount * 100, // Stripe ใช้ satang (THB * 100)
-            },
-            quantity: 1,
-          },
-        ],
-        mode: 'payment',
-        success_url: `${baseUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${baseUrl}/payment/cancel`,
+      // Create charge using Omise SDK
+      const chargeParams: any = {
+        amount,
+        currency: 'thb',
+        return_uri: returnUri,
         metadata: {
           orgId: internalOrgId,
           lineOrgId: orgId,
@@ -103,75 +138,112 @@ export class PaymentService {
           plan,
           period,
         },
+      };
+
+      if (omiseToken) {
+        chargeParams.card = omiseToken;
+      } else if (omiseSource) {
+        chargeParams.source = omiseSource;
+      } else {
+        return { error: 'No token or source provided' };
+      }
+
+      // We have to cast as promises are returned when no callback is provided in omise-nodejs
+      const charge = await new Promise<any>((resolve, reject) => {
+        this.omiseClient!.charges.create(chargeParams, (err, resp) => {
+          if (err) reject(err);
+          else resolve(resp);
+        });
       });
 
-      // Save payment record
+      // Save payment reference to DB
       await this.prisma.payment.create({
         data: {
           orgId: internalOrgId,
-          amount: amount * 100,
+          amount,
           plan,
           period,
-          status: 'pending',
-          paymentRef: session.id,
+          status: charge.status || 'pending',
+          paymentRef: charge.id,
         },
       });
 
-      return { url: session.url || '' };
+      if (charge.status === 'successful') {
+        // Automatically upgrades plan since it was immediate
+        await this.handleSuccessfulPayment(charge.metadata, charge.id);
+        return { redirectUrl: `${baseUrl}/payment/success` };
+      } else if (charge.status === 'pending' && charge.authorize_uri) {
+        // Redirect to Omise authorize_uri for PromptPay QR or 3DS
+        return { redirectUrl: charge.authorize_uri };
+      } else {
+        return { redirectUrl: `${baseUrl}/payment/cancel` };
+      }
     } catch (error) {
-      console.error('Stripe checkout error:', error);
-      return { error: '❌ สร้างลิงก์ชำระเงินไม่สำเร็จ ลองใหม่อีกครั้ง' };
+      console.error('Omise charge error:', error);
+      return { error: 'เกิดข้อผิดพลาดในการสร้างรายการชำระเงิน' };
     }
   }
 
-  // ═══════════════════════════════════════════════
-  // Handle Stripe Webhook
-  // ═══════════════════════════════════════════════
-  async handleWebhook(
-    rawBody: Buffer,
-    signature: string,
-  ): Promise<{ ok: boolean }> {
+  async handleWebhook(event: any): Promise<{ ok: boolean }> {
     try {
-      if (!this.stripe) return { ok: false };
-
-      let event: Stripe.Event;
-
-      // Verify webhook signature (skip if no secret set yet)
-      if (this.webhookSecret && this.webhookSecret !== 'whsec_placeholder') {
-        event = this.stripe.webhooks.constructEvent(
-          rawBody,
-          signature,
-          this.webhookSecret,
-        );
-      } else {
-        // Fallback: parse without verification (for testing)
-        event = JSON.parse(rawBody.toString()) as Stripe.Event;
+      // Basic webhook validation
+      if (event.object === 'event' && event.key === 'charge.complete') {
+        const charge = event.data;
+        if (charge.status === 'successful') {
+          await this.handleSuccessfulPayment(charge.metadata, charge.id);
+        } else if (charge.status === 'failed') {
+          await this.prisma.payment.updateMany({
+            where: { paymentRef: charge.id },
+            data: { status: 'failed' },
+          });
+        }
       }
-
-      if (event.type === 'checkout.session.completed') {
-        const session = event.data.object as Stripe.Checkout.Session;
-        await this.handleSuccessfulPayment(session);
-      }
-
       return { ok: true };
     } catch (error) {
-      console.error('Stripe webhook error:', error);
+      console.error('Omise webhook error:', error);
       return { ok: false };
     }
   }
 
-  // ═══════════════════════════════════════════════
-  // Process successful payment
-  // ═══════════════════════════════════════════════
+  async checkChargeCompletion(chargeId: string): Promise<string> {
+    try {
+      const charge = await new Promise<any>((resolve, reject) => {
+        this.omiseClient!.charges.retrieve(chargeId, (err, resp) => {
+          if (err) reject(err);
+          else resolve(resp);
+        });
+      });
+
+      if (charge.status === 'successful') {
+        // Double check to update plan in case webhook was delayed
+        await this.handleSuccessfulPayment(charge.metadata, charge.id);
+        return 'success';
+      } else if (charge.status === 'failed') {
+        return 'failed';
+      }
+      return 'pending';
+    } catch (error) {
+      console.error('Error checking charge:', error);
+      return 'pending';
+    }
+  }
+
   private async handleSuccessfulPayment(
-    session: Stripe.Checkout.Session,
+    metadata: any,
+    chargeId: string,
   ): Promise<void> {
     try {
-      const metadata = session.metadata;
       if (!metadata) return;
 
-      const { orgId, lineOrgId, isGroup, plan, period } = metadata;
+      const { orgId, lineOrgId, plan, period } = metadata;
       if (!orgId || !plan) return;
+
+      // Check if already processed
+      const existingPayment = await this.prisma.payment.findFirst({
+        where: { paymentRef: chargeId },
+      });
+
+      if (existingPayment?.status === 'completed') return;
 
       // Calculate expiration
       const now = new Date();
@@ -188,7 +260,6 @@ export class PaymentService {
         data: {
           plan,
           planExpiresAt: expiresAt,
-          // Reset counters on upgrade
           aiChatsToday: 0,
           tasksThisMonth: 0,
         },
@@ -196,11 +267,11 @@ export class PaymentService {
 
       // Update payment record
       await this.prisma.payment.updateMany({
-        where: { paymentRef: session.id },
+        where: { paymentRef: chargeId },
         data: { status: 'completed' },
       });
 
-      // Send LINE notification to the user/group
+      // Send LINE notification
       const planEmoji: Record<string, string> = {
         basic: '⭐',
         pro: '🔥',
@@ -216,25 +287,18 @@ export class PaymentService {
 📅 ใช้ได้ถึง: ${expiresStr} (${periodLabel})
 
 🎉 ขอบคุณที่สนับสนุน Arkai!
-ตอนนี้คุณสามารถใช้ฟีเจอร์ใหม่ได้ทันทีครับ
-พิมพ์ /plan เพื่อดูรายละเอียดแผนของคุณ`;
+ตอนนี้คุณสามารถใช้ฟีเจอร์ใหม่ได้ทันทีครับ`;
 
-      // Push message to user/group
       if (lineOrgId) {
         await this.pushMessage(lineOrgId, message);
       }
 
-      console.log(
-        `✅ Payment success: org=${orgId}, plan=${plan}, period=${period}`,
-      );
+      console.log(`✅ Payment success: org=${orgId}, plan=${plan}`);
     } catch (error) {
       console.error('handleSuccessfulPayment error:', error);
     }
   }
 
-  // ═══════════════════════════════════════════════
-  // Push message to LINE (not reply — no token needed)
-  // ═══════════════════════════════════════════════
   private async pushMessage(to: string, text: string): Promise<void> {
     try {
       await axios.post(
@@ -257,42 +321,5 @@ export class PaymentService {
         (error as any)?.response?.data || (error as Error).message,
       );
     }
-  }
-
-  // ═══════════════════════════════════════════════
-  // Generate /upgrade response message
-  // ═══════════════════════════════════════════════
-  async getUpgradeMessage(
-    orgId: string,
-    isGroup: boolean,
-    plan: string,
-    period: string,
-  ): Promise<string> {
-    const result = await this.createCheckoutSession(
-      orgId,
-      isGroup,
-      plan,
-      period,
-    );
-
-    if ('error' in result) {
-      return result.error;
-    }
-
-    const planConfig = PLAN_PRICES[plan];
-    if (!planConfig) return '❌ แผนไม่ถูกต้อง';
-
-    const amount = period === 'yearly' ? planConfig.yearly : planConfig.monthly;
-    const periodLabel = period === 'yearly' ? 'รายปี' : 'รายเดือน';
-
-    return `💳 ชำระเงินอัพเกรด ${planConfig.label}
-
-💰 ราคา: ฿${amount} (${periodLabel})
-🔗 กดลิงก์ด้านล่างเพื่อชำระเงิน:
-${result.url}
-
-⏰ ลิงก์ชำระเงินใช้ได้ 30 นาที
-✅ รองรับ: บัตรเครดิต/เดบิต, พร้อมเพย์
-🔒 ชำระเงินผ่าน Stripe (ปลอดภัย 100%)`;
   }
 }
